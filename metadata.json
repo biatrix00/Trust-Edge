@@ -1,0 +1,6 @@
+{
+  "name": "TRUSTEDGE - Autonomous Sensor Spoofing Detection & Fail-Safe System",
+  "description": "Deterministic multi-modal sensor trust engine, fail-safe FSM, ESP32 firmware, bridge service, and live telemetry dashboard.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

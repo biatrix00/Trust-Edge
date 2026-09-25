@@ -1,0 +1,1091 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>TRUSTEDGE - Live Telemetry & Fail-Safe Dashboard</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600;700&family=Plus+Jakarta+Sans:wght@500;600;700;800&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --bg: #090d16;
+      --card-bg: #111827;
+      --border: #1f2937;
+      --text: #f3f4f6;
+      --text-muted: #9ca3af;
+      --nominal: #10b981;
+      --degraded: #f59e0b;
+      --limp: #f97316;
+      --safestop: #ef4444;
+      --cyan: #06b6d4;
+    }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    body {
+      background-color: var(--bg);
+      color: var(--text);
+      font-family: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, sans-serif;
+      min-height: 100vh;
+      padding: 24px;
+      display: flex;
+      flex-direction: column;
+      gap: 20px;
+    }
+
+    .mono {
+      font-family: 'JetBrains Mono', monospace;
+    }
+
+    /* Header */
+    header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 16px 24px;
+      background: var(--card-bg);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      box-shadow: 0 4px 20px rgba(0, 0, 0, 0.4);
+    }
+
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 14px;
+    }
+
+    .badge-logo {
+      background: linear-gradient(135deg, #06b6d4, #3b82f6);
+      width: 44px;
+      height: 44px;
+      border-radius: 10px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-weight: 800;
+      font-size: 20px;
+      color: white;
+      box-shadow: 0 0 15px rgba(6, 182, 212, 0.4);
+    }
+
+    .header-titles h1 {
+      font-size: 20px;
+      font-weight: 800;
+      letter-spacing: -0.5px;
+      color: #fff;
+    }
+
+    .header-titles p {
+      font-size: 12px;
+      color: var(--text-muted);
+    }
+
+    .ws-status-badge {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 6px 14px;
+      border-radius: 9999px;
+      font-size: 13px;
+      font-weight: 600;
+      background: rgba(239, 68, 68, 0.15);
+      color: #ef4444;
+      border: 1px solid rgba(239, 68, 68, 0.3);
+      transition: all 0.3s;
+    }
+
+    .ws-status-badge.connected {
+      background: rgba(16, 185, 129, 0.15);
+      color: #10b981;
+      border-color: rgba(16, 185, 129, 0.3);
+    }
+
+    .dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: currentColor;
+      box-shadow: 0 0 8px currentColor;
+    }
+
+    /* Grid Layout */
+    .dashboard-grid {
+      display: grid;
+      grid-template-columns: 360px 1fr 340px;
+      gap: 20px;
+      flex: 1;
+    }
+
+    @media (max-width: 1200px) {
+      .dashboard-grid {
+        grid-template-columns: 1fr;
+      }
+    }
+
+    .panel {
+      background: var(--card-bg);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      padding: 20px;
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+      box-shadow: 0 4px 16px rgba(0, 0, 0, 0.25);
+    }
+
+    .panel-title {
+      font-size: 14px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.8px;
+      color: var(--text-muted);
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+
+    /* Gauge & State Section */
+    .gauge-wrapper {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      position: relative;
+      padding: 10px 0;
+    }
+
+    .gauge-svg {
+      width: 240px;
+      height: 140px;
+      overflow: visible;
+    }
+
+    .gauge-track {
+      fill: none;
+      stroke: #1f2937;
+      stroke-width: 16;
+      stroke-linecap: round;
+    }
+
+    .gauge-fill {
+      fill: none;
+      stroke-width: 16;
+      stroke-linecap: round;
+      stroke-dasharray: 283;
+      stroke-dashoffset: 0;
+      transition: stroke-dashoffset 0.4s ease, stroke 0.4s ease;
+    }
+
+    .gauge-value-display {
+      position: absolute;
+      top: 65px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+    }
+
+    .gauge-score-number {
+      font-size: 42px;
+      font-weight: 800;
+      letter-spacing: -1px;
+    }
+
+    .gauge-score-label {
+      font-size: 11px;
+      font-weight: 600;
+      color: var(--text-muted);
+      text-transform: uppercase;
+      letter-spacing: 1px;
+    }
+
+    .state-banner {
+      padding: 14px;
+      border-radius: 10px;
+      text-align: center;
+      font-weight: 800;
+      font-size: 18px;
+      letter-spacing: 1.5px;
+      text-transform: uppercase;
+      box-shadow: 0 0 20px rgba(0, 0, 0, 0.4);
+      transition: all 0.3s;
+    }
+
+    .state-nominal {
+      background: rgba(16, 185, 129, 0.2);
+      color: var(--nominal);
+      border: 1px solid var(--nominal);
+      box-shadow: 0 0 20px rgba(16, 185, 129, 0.2);
+    }
+
+    .state-degraded {
+      background: rgba(245, 158, 11, 0.2);
+      color: var(--degraded);
+      border: 1px solid var(--degraded);
+      box-shadow: 0 0 20px rgba(245, 158, 11, 0.2);
+    }
+
+    .state-limp {
+      background: rgba(249, 115, 22, 0.2);
+      color: var(--limp);
+      border: 1px solid var(--limp);
+      box-shadow: 0 0 20px rgba(249, 115, 22, 0.2);
+    }
+
+    .state-safestop {
+      background: rgba(239, 68, 68, 0.25);
+      color: var(--safestop);
+      border: 1px solid var(--safestop);
+      box-shadow: 0 0 25px rgba(239, 68, 68, 0.4);
+      animation: pulseAlert 1.2s infinite;
+    }
+
+    @keyframes pulseAlert {
+      0%, 100% { transform: scale(1); }
+      50% { transform: scale(1.02); }
+    }
+
+    /* Penalty Meters */
+    .penalty-item {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      font-size: 12px;
+    }
+
+    .penalty-label-row {
+      display: flex;
+      justify-content: space-between;
+      color: var(--text-muted);
+    }
+
+    .meter-bar {
+      height: 6px;
+      background: #1f2937;
+      border-radius: 9999px;
+      overflow: hidden;
+    }
+
+    .meter-fill {
+      height: 100%;
+      background: #ef4444;
+      width: 0%;
+      transition: width 0.3s ease;
+    }
+
+    /* Live Chart */
+    .chart-container {
+      flex: 1;
+      min-height: 220px;
+      position: relative;
+      background: #0b111e;
+      border: 1px solid #1e293b;
+      border-radius: 10px;
+      overflow: hidden;
+    }
+
+    canvas {
+      width: 100%;
+      height: 100%;
+      display: block;
+    }
+
+    /* Sensor Readings Table */
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 13px;
+    }
+
+    th {
+      text-align: left;
+      padding: 10px;
+      color: var(--text-muted);
+      border-bottom: 1px solid var(--border);
+      font-weight: 600;
+    }
+
+    td {
+      padding: 12px 10px;
+      border-bottom: 1px solid #1a2234;
+    }
+
+    .sensor-badge {
+      display: inline-flex;
+      align-items: center;
+      padding: 4px 8px;
+      border-radius: 6px;
+      font-weight: 600;
+      font-size: 11px;
+    }
+
+    .badge-clear {
+      background: rgba(16, 185, 129, 0.15);
+      color: #34d399;
+    }
+
+    .badge-triggered {
+      background: rgba(239, 68, 68, 0.2);
+      color: #f87171;
+    }
+
+    /* Attack Injector Buttons */
+    .btn-group {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+
+    .btn {
+      padding: 10px 14px;
+      border-radius: 8px;
+      border: 1px solid transparent;
+      font-size: 12px;
+      font-weight: 700;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      transition: all 0.2s ease;
+      color: white;
+    }
+
+    .btn:hover {
+      filter: brightness(1.15);
+      transform: translateY(-1px);
+    }
+
+    .btn:active {
+      transform: translateY(0);
+    }
+
+    .btn-attack-blindspot {
+      background: #7c2d12;
+      border-color: #ea580c;
+    }
+
+    .btn-attack-ghost {
+      background: #581c87;
+      border-color: #9333ea;
+    }
+
+    .btn-attack-freeze {
+      background: #1e3a8a;
+      border-color: #2563eb;
+    }
+
+    .btn-attack-jitter {
+      background: #831843;
+      border-color: #db2777;
+    }
+
+    .btn-clear {
+      background: #065f46;
+      border-color: #10b981;
+    }
+
+    .btn-estop {
+      background: #991b1b;
+      border-color: #dc2626;
+      font-size: 14px;
+      padding: 12px;
+      justify-content: center;
+      gap: 8px;
+    }
+
+    .btn-resume {
+      background: #065f46;
+      border-color: #059669;
+      font-size: 14px;
+      padding: 12px;
+      justify-content: center;
+      gap: 8px;
+    }
+
+    /* Logs Panel */
+    .log-scroller {
+      height: 180px;
+      overflow-y: auto;
+      background: #0b111e;
+      border: 1px solid #1e293b;
+      border-radius: 8px;
+      padding: 10px;
+      font-size: 11px;
+      display: flex;
+      flex-direction: column-reverse;
+      gap: 6px;
+    }
+
+    .log-row {
+      display: flex;
+      gap: 8px;
+      line-height: 1.4;
+    }
+
+    .log-time {
+      color: #6b7280;
+      flex-shrink: 0;
+    }
+
+    .log-state {
+      font-weight: 700;
+    }
+
+    .log-text {
+      color: #d1d5db;
+    }
+
+    /* Settings & Connection bar */
+    .ws-bar {
+      display: flex;
+      gap: 10px;
+      margin-top: 4px;
+    }
+
+    .ws-input {
+      flex: 1;
+      background: #0b111e;
+      border: 1px solid #1e293b;
+      padding: 6px 12px;
+      color: #e5e7eb;
+      border-radius: 6px;
+      font-size: 12px;
+    }
+
+    .ws-btn {
+      padding: 6px 14px;
+      background: #2563eb;
+      border: none;
+      color: white;
+      border-radius: 6px;
+      font-weight: 600;
+      font-size: 12px;
+      cursor: pointer;
+    }
+  </style>
+</head>
+<body>
+
+  <!-- Header -->
+  <header>
+    <div class="brand">
+      <div class="badge-logo">TE</div>
+      <div class="header-titles">
+        <h1>TRUSTEDGE &mdash; SENSOR SPOOFING DEFENSE</h1>
+        <p>Deterministic Safety FSM &middot; Multi-Modal Sensor Fusion &middot; Real-Time Actuator E-Stop</p>
+      </div>
+    </div>
+    <div style="display: flex; align-items: center; gap: 16px;">
+      <div id="wsBadge" class="ws-status-badge">
+        <div class="dot"></div>
+        <span id="wsStatusText">Disconnected</span>
+      </div>
+      <button id="simBtn" class="btn btn-clear" style="padding: 6px 12px; font-size: 11px;" onclick="toggleSimulation()">
+        Mode: Live Hardware
+      </button>
+    </div>
+  </header>
+
+  <!-- Main Grid -->
+  <div class="dashboard-grid">
+
+    <!-- Column 1: Trust Score & Safety State -->
+    <div class="panel">
+      <div class="panel-title">
+        <span>Trust Engine & FSM</span>
+        <span id="activeAttackBadge" style="font-size: 11px; color: #f87171;"></span>
+      </div>
+
+      <div class="gauge-wrapper">
+        <svg class="gauge-svg" viewBox="0 0 200 110">
+          <!-- Background arc -->
+          <path class="gauge-track" d="M 20 100 A 80 80 0 0 1 180 100" />
+          <!-- Animated score fill arc -->
+          <path id="gaugeFill" class="gauge-fill" stroke="#10b981" d="M 20 100 A 80 80 0 0 1 180 100" />
+        </svg>
+        <div class="gauge-value-display">
+          <div id="scoreDisplay" class="gauge-score-number mono" style="color: var(--nominal);">100%</div>
+          <div class="gauge-score-label">Integrity Score</div>
+        </div>
+      </div>
+
+      <div id="stateBanner" class="state-banner state-nominal">
+        NOMINAL
+      </div>
+
+      <div style="display: flex; flex-direction: column; gap: 12px; margin-top: 6px;">
+        <div class="penalty-item">
+          <div class="penalty-label-row">
+            <span>Cross-Modal Inconsistency</span>
+            <span id="valCrossModal" class="mono">0 pts</span>
+          </div>
+          <div class="meter-bar"><div id="barCrossModal" class="meter-fill"></div></div>
+        </div>
+
+        <div class="penalty-item">
+          <div class="penalty-label-row">
+            <span>Acoustic Jitter / Dynamics</span>
+            <span id="valJitter" class="mono">0 pts</span>
+          </div>
+          <div class="meter-bar"><div id="barJitter" class="meter-fill"></div></div>
+        </div>
+
+        <div class="penalty-item">
+          <div class="penalty-label-row">
+            <span>Sensor Freeze / Replay</span>
+            <span id="valFreeze" class="mono">0 pts</span>
+          </div>
+          <div class="meter-bar"><div id="barFreeze" class="meter-fill"></div></div>
+        </div>
+
+        <div class="penalty-item">
+          <div class="penalty-label-row">
+            <span>Persistence Multiplier</span>
+            <span id="valPersist" class="mono">1.00x</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="ws-bar">
+        <input id="wsUrlInput" class="ws-input mono" value="ws://localhost:8765" />
+        <button class="ws-btn" onclick="reconnectWs()">Connect</button>
+      </div>
+    </div>
+
+    <!-- Column 2: Live Telemetry & Score Trend -->
+    <div class="panel" style="gap: 16px;">
+      <div class="panel-title">
+        <span>Live Sensor Telemetry (10 Hz)</span>
+        <span id="packetCounter" class="mono" style="font-size: 11px;">0 pkts</span>
+      </div>
+
+      <!-- Sensor Table -->
+      <table>
+        <thead>
+          <tr>
+            <th>SENSOR</th>
+            <th>VALUE</th>
+            <th>PHYSICAL STATUS</th>
+            <th>HEALTH</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><strong>HC-SR04 Ultrasonic</strong></td>
+            <td id="tdUltrasonic" class="mono" style="font-size: 16px; font-weight: 700;">-- cm</td>
+            <td id="tdUltrasonicStatus">Waiting for data...</td>
+            <td><span id="badgeUltrasonic" class="sensor-badge badge-clear">NORMAL</span></td>
+          </tr>
+          <tr>
+            <td><strong>IR Optical 1 (Left)</strong></td>
+            <td id="tdIr1" class="mono">0</td>
+            <td id="tdIr1Status">Clear</td>
+            <td><span id="badgeIr1" class="sensor-badge badge-clear">OK</span></td>
+          </tr>
+          <tr>
+            <td><strong>IR Optical 2 (Right)</strong></td>
+            <td id="tdIr2" class="mono">0</td>
+            <td id="tdIr2Status">Clear</td>
+            <td><span id="badgeIr2" class="sensor-badge badge-clear">OK</span></td>
+          </tr>
+          <tr>
+            <td><strong>PIR Motion</strong></td>
+            <td id="tdPir" class="mono">0</td>
+            <td id="tdPirStatus">Stationary</td>
+            <td><span id="badgePir" class="sensor-badge badge-clear">OK</span></td>
+          </tr>
+          <tr>
+            <td><strong>DHT11 Environmental</strong></td>
+            <td id="tdDht" class="mono">-- &deg;C / --%</td>
+            <td id="tdDhtStatus">Ambient stable</td>
+            <td><span id="badgeDht" class="sensor-badge badge-clear">OK</span></td>
+          </tr>
+        </tbody>
+      </table>
+
+      <!-- Real-time Chart -->
+      <div class="panel-title" style="margin-top: 8px;">
+        <span>Rolling Trust Score & Threshold History</span>
+      </div>
+      <div class="chart-container">
+        <canvas id="scoreChart"></canvas>
+      </div>
+    </div>
+
+    <!-- Column 3: Attack Injection & Actuator Control -->
+    <div class="panel">
+      <div class="panel-title">
+        <span>Spoof Attack Injector</span>
+        <span style="font-size: 10px; color: #ef4444;">DEMO TESTING</span>
+      </div>
+
+      <div class="btn-group">
+        <button class="btn btn-attack-blindspot" onclick="triggerSpoof('blindspot')">
+          <span>Blindspot Spoof (140cm vs IR=1)</span>
+          <span>&#9889;</span>
+        </button>
+        <button class="btn btn-attack-ghost" onclick="triggerSpoof('ghost_wall')">
+          <span>Ghost Wall (5cm vs IR=0)</span>
+          <span>&#9889;</span>
+        </button>
+        <button class="btn btn-attack-freeze" onclick="triggerSpoof('freeze')">
+          <span>Sensor Freeze (Replay)</span>
+          <span>&#10052;</span>
+        </button>
+        <button class="btn btn-attack-jitter" onclick="triggerSpoof('jitter')">
+          <span>EMP / Acoustic Jitter Spike</span>
+          <span>&#12316;</span>
+        </button>
+        <button class="btn btn-clear" onclick="triggerSpoof('clear')">
+          <span>Restore Normal Telemetry</span>
+          <span>&#10003;</span>
+        </button>
+      </div>
+
+      <div class="panel-title" style="margin-top: 10px;">
+        <span>Actuator Commands (ESP32)</span>
+      </div>
+
+      <div style="display: flex; gap: 8px;">
+        <button class="btn btn-estop" style="flex: 1;" onclick="sendCommand('safe_stop')">
+          <span>&#9940; SAFE STOP</span>
+        </button>
+        <button class="btn btn-resume" style="flex: 1;" onclick="sendCommand('resume')">
+          <span>&#9654; RESUME</span>
+        </button>
+      </div>
+
+      <div style="display: flex; gap: 6px;">
+        <button class="btn" style="flex: 1; background: #374151;" onclick="sendServo(45)">Steer 45&deg;</button>
+        <button class="btn" style="flex: 1; background: #374151;" onclick="sendServo(90)">Center 90&deg;</button>
+        <button class="btn" style="flex: 1; background: #374151;" onclick="sendServo(135)">Steer 135&deg;</button>
+      </div>
+
+      <div class="panel-title" style="margin-top: 10px;">
+        <span>Safety FSM Audit Log</span>
+      </div>
+      <div id="logScroller" class="log-scroller mono">
+        <!-- Log entries -->
+        <div class="log-row">
+          <span class="log-time">00:00:00</span>
+          <span class="log-state" style="color: #10b981;">NOMINAL</span>
+          <span class="log-text">TrustEdge system initialized</span>
+        </div>
+      </div>
+    </div>
+
+  </div>
+
+  <script>
+    // System State
+    let socket = null;
+    let isSimulated = false;
+    let simTimer = null;
+    let packetCount = 0;
+    let scoreHistory = [];
+    const MAX_HISTORY = 70;
+
+    // Simulated Rover State
+    let simDist = 65.0;
+    let simVel = -2.5;
+    let simSpoof = null;
+    let simScore = 100.0;
+    let simConsecutive = 0;
+    let simCurrentState = "NOMINAL";
+
+    // Chart Canvas Setup
+    const canvas = document.getElementById("scoreChart");
+    const ctx = canvas.getContext("2d");
+
+    function resizeCanvas() {
+      const rect = canvas.parentElement.getBoundingClientRect();
+      canvas.width = rect.width;
+      canvas.height = rect.height;
+    }
+    window.addEventListener("resize", resizeCanvas);
+    resizeCanvas();
+
+    // Fill history initially with 100s
+    for (let i = 0; i < MAX_HISTORY; i++) {
+      scoreHistory.push(100);
+    }
+
+    // Connect WebSocket
+    function connectWebSocket(url) {
+      if (socket) {
+        try { socket.close(); } catch(e) {}
+      }
+
+      const badge = document.getElementById("wsBadge");
+      const statusText = document.getElementById("wsStatusText");
+      statusText.innerText = "Connecting...";
+
+      try {
+        socket = new WebSocket(url);
+      } catch (err) {
+        console.warn("WebSocket error:", err);
+        enableSimulatedMode();
+        return;
+      }
+
+      socket.onopen = () => {
+        badge.classList.add("connected");
+        statusText.innerText = "Live Connected";
+        if (isSimulated) disableSimulatedMode();
+      };
+
+      socket.onclose = () => {
+        badge.classList.remove("connected");
+        statusText.innerText = "Disconnected";
+      };
+
+      socket.onerror = (e) => {
+        badge.classList.remove("connected");
+        statusText.innerText = "Connection Failed";
+        // If not connected, invite simulated mode
+        if (!isSimulated) {
+          enableSimulatedMode();
+        }
+      };
+
+      socket.onmessage = (event) => {
+        try {
+          const msg = JSON.parse(event.data);
+          handleBackendMessage(msg);
+        } catch(e) {
+          console.error("Failed to parse message:", e);
+        }
+      };
+    }
+
+    function reconnectWs() {
+      const url = document.getElementById("wsUrlInput").value;
+      connectWebSocket(url);
+    }
+
+    function handleBackendMessage(msg) {
+      if (msg.type === "telemetry") {
+        updateUI(msg.reading, msg.score, msg.state, msg.penalties, msg.details, msg.state_changed, msg.reason);
+      } else if (msg.type === "init") {
+        updateScoreAndState(msg.score, msg.state);
+        if (msg.logs) {
+          msg.logs.forEach(l => appendLog(l.timestamp_str, l.new_state, l.reason));
+        }
+      }
+    }
+
+    // UI Updates
+    function updateUI(reading, score, state, penalties, details, stateChanged, reason) {
+      packetCount++;
+      document.getElementById("packetCounter").innerText = `${packetCount} pkts`;
+
+      // Update Sensor Table
+      const us = reading.ultrasonic_cm;
+      document.getElementById("tdUltrasonic").innerText = `${us.toFixed(1)} cm`;
+      document.getElementById("tdIr1").innerText = reading.ir1;
+      document.getElementById("tdIr2").innerText = reading.ir2;
+      document.getElementById("tdPir").innerText = reading.pir;
+      document.getElementById("tdDht").innerText = `${reading.temp_c}°C / ${reading.humidity_pct}%`;
+
+      // Badges
+      const bUs = document.getElementById("badgeUltrasonic");
+      const bIr1 = document.getElementById("badgeIr1");
+      const bIr2 = document.getElementById("badgeIr2");
+
+      if (us < 12.0) {
+        bUs.className = "sensor-badge badge-triggered";
+        bUs.innerText = "CLOSE OBSTACLE";
+      } else {
+        bUs.className = "sensor-badge badge-clear";
+        bUs.innerText = "NORMAL";
+      }
+
+      bIr1.className = reading.ir1 ? "sensor-badge badge-triggered" : "sensor-badge badge-clear";
+      bIr1.innerText = reading.ir1 ? "TRIGGERED" : "CLEAR";
+
+      bIr2.className = reading.ir2 ? "sensor-badge badge-triggered" : "sensor-badge badge-clear";
+      bIr2.innerText = reading.ir2 ? "TRIGGERED" : "CLEAR";
+
+      // Penalties
+      if (penalties) {
+        document.getElementById("valCrossModal").innerText = `${penalties.cross_modal} pts`;
+        document.getElementById("barCrossModal").style.width = `${Math.min(100, penalties.cross_modal * 2)}%`;
+
+        document.getElementById("valJitter").innerText = `${penalties.jitter} pts`;
+        document.getElementById("barJitter").style.width = `${Math.min(100, penalties.jitter * 2)}%`;
+
+        document.getElementById("valFreeze").innerText = `${penalties.freeze} pts`;
+        document.getElementById("barFreeze").style.width = `${Math.min(100, penalties.freeze * 2)}%`;
+
+        document.getElementById("valPersist").innerText = `${penalties.persistence_mult}x`;
+      }
+
+      updateScoreAndState(score, state);
+
+      if (stateChanged && reason) {
+        const timeStr = new Date().toTimeString().split(' ')[0];
+        appendLog(timeStr, state, reason);
+      }
+    }
+
+    function updateScoreAndState(score, state) {
+      // Push into chart
+      scoreHistory.push(score);
+      if (scoreHistory.length > MAX_HISTORY) scoreHistory.shift();
+      drawChart();
+
+      // Gauge arc (Total circumference of semicircle r=80 is pi*80 ≈ 251.3)
+      const maxOffset = 251.3;
+      const progress = Math.max(0, Math.min(100, score)) / 100;
+      const offset = maxOffset * (1 - progress);
+      const gaugeFill = document.getElementById("gaugeFill");
+      gaugeFill.style.strokeDasharray = maxOffset;
+      gaugeFill.style.strokeDashoffset = offset;
+
+      let color = "var(--nominal)";
+      if (state === "DEGRADED") color = "var(--degraded)";
+      else if (state === "LIMP-HOME") color = "var(--limp)";
+      else if (state === "SAFE-STOP") color = "var(--safestop)";
+
+      gaugeFill.setAttribute("stroke", color);
+      const scoreDisp = document.getElementById("scoreDisplay");
+      scoreDisp.innerText = `${Math.round(score)}%`;
+      scoreDisp.style.color = color;
+
+      // Banner
+      const banner = document.getElementById("stateBanner");
+      banner.className = `state-banner state-${state.toLowerCase().replace('-', '')}`;
+      banner.innerText = state;
+    }
+
+    function appendLog(timeStr, state, reason) {
+      const scroller = document.getElementById("logScroller");
+      const row = document.createElement("div");
+      row.className = "log-row";
+      
+      let stateColor = "#10b981";
+      if (state === "DEGRADED") stateColor = "#f59e0b";
+      else if (state === "LIMP-HOME") stateColor = "#f97316";
+      else if (state === "SAFE-STOP") stateColor = "#ef4444";
+
+      row.innerHTML = `
+        <span class="log-time">${timeStr}</span>
+        <span class="log-state" style="color: ${stateColor};">[${state}]</span>
+        <span class="log-text">${reason}</span>
+      `;
+      scroller.prepend(row);
+    }
+
+    // Chart Renderer
+    function drawChart() {
+      const w = canvas.width;
+      const h = canvas.height;
+      ctx.clearRect(0, 0, w, h);
+
+      // Draw threshold lines
+      // Nominal (90%), Degraded (65%), Limp (30%)
+      const thresholds = [
+        { val: 90, color: "rgba(16, 185, 129, 0.25)", label: "Nominal 90%" },
+        { val: 65, color: "rgba(245, 158, 11, 0.25)", label: "Degraded 65%" },
+        { val: 30, color: "rgba(239, 68, 68, 0.25)", label: "Safe-Stop 30%" },
+      ];
+
+      thresholds.forEach(t => {
+        const y = h - (t.val / 100) * h;
+        ctx.strokeStyle = t.color;
+        ctx.setLineDash([4, 4]);
+        ctx.beginPath();
+        ctx.moveTo(0, y);
+        ctx.lineTo(w, y);
+        ctx.stroke();
+
+        ctx.fillStyle = t.color;
+        ctx.font = "10px JetBrains Mono";
+        ctx.fillText(t.label, 10, y - 4);
+      });
+      ctx.setLineDash([]);
+
+      // Draw score line
+      if (scoreHistory.length < 2) return;
+      ctx.beginPath();
+      const step = w / (MAX_HISTORY - 1);
+
+      scoreHistory.forEach((s, idx) => {
+        const x = idx * step;
+        const y = h - (s / 100) * (h - 10) - 5;
+        if (idx === 0) ctx.moveTo(x, y);
+        else ctx.lineTo(x, y);
+      });
+
+      const latestScore = scoreHistory[scoreHistory.length - 1];
+      let strokeColor = "#10b981";
+      if (latestScore < 30) strokeColor = "#ef4444";
+      else if (latestScore < 65) strokeColor = "#f97316";
+      else if (latestScore < 90) strokeColor = "#f59e0b";
+
+      ctx.strokeStyle = strokeColor;
+      ctx.lineWidth = 3;
+      ctx.stroke();
+
+      // Fill area under line
+      ctx.lineTo(w, h);
+      ctx.lineTo(0, h);
+      ctx.closePath();
+      const grad = ctx.createLinearGradient(0, 0, 0, h);
+      grad.addColorStop(0, strokeColor + "44");
+      grad.addColorStop(1, strokeColor + "00");
+      ctx.fillStyle = grad;
+      ctx.fill();
+    }
+
+    // Attack Trigger Commands
+    function triggerSpoof(type) {
+      document.getElementById("activeAttackBadge").innerText = type === "clear" ? "" : `ACTIVE: ${type.toUpperCase()}`;
+      if (socket && socket.readyState === WebSocket.OPEN) {
+        socket.send(JSON.stringify({ action: type === "clear" ? "clear_spoof" : "inject_spoof", type: type }));
+      } else {
+        // Apply locally in simulation mode
+        simSpoof = (type === "clear") ? null : type;
+      }
+    }
+
+    function sendCommand(cmdStr) {
+      if (socket && socket.readyState === WebSocket.OPEN) {
+        socket.send(JSON.stringify({ action: "command", cmd: { cmd: cmdStr } }));
+      }
+      appendLog(new Date().toTimeString().split(' ')[0], "COMMAND", `Dispatched {"cmd": "${cmdStr}"} to ESP32`);
+    }
+
+    function sendServo(angle) {
+      if (socket && socket.readyState === WebSocket.OPEN) {
+        socket.send(JSON.stringify({ action: "command", cmd: { cmd: "servo_angle", value: angle } }));
+      }
+      appendLog(new Date().toTimeString().split(' ')[0], "ACTUATOR", `Set Steering Servo to ${angle}°`);
+    }
+
+    // Built-in Simulator for Instant Demoing without Python backend
+    function toggleSimulation() {
+      if (isSimulated) disableSimulatedMode();
+      else enableSimulatedMode();
+    }
+
+    function enableSimulatedMode() {
+      isSimulated = true;
+      document.getElementById("simBtn").innerText = "Mode: Built-in Simulator";
+      document.getElementById("simBtn").style.borderColor = "#38bdf8";
+      document.getElementById("wsStatusText").innerText = "Simulated Loop (10Hz)";
+      document.getElementById("wsBadge").classList.add("connected");
+      
+      if (simTimer) clearInterval(simTimer);
+      simTimer = setInterval(runSimCycle, 100);
+      appendLog(new Date().toTimeString().split(' ')[0], "INFO", "Started built-in 10Hz simulation engine");
+    }
+
+    function disableSimulatedMode() {
+      isSimulated = false;
+      document.getElementById("simBtn").innerText = "Mode: Live Hardware";
+      document.getElementById("simBtn").style.borderColor = "";
+      if (simTimer) clearInterval(simTimer);
+      reconnectWs();
+    }
+
+    function runSimCycle() {
+      // Step physical model
+      simDist += simVel * 0.1;
+      if (simDist < 8.0) { simDist = 8.0; simVel = 2.5; }
+      else if (simDist > 85.0) { simDist = 85.0; simVel = -2.5; }
+
+      const noise = (Math.random() - 0.5) * 0.8;
+      const trueDist = Math.max(4.0, simDist + noise);
+      const trueIr1 = trueDist < 14.0 ? 1 : 0;
+      const trueIr2 = trueDist < 11.0 ? 1 : 0;
+
+      let reading = {
+        ts: Date.now() / 1000,
+        ultrasonic_cm: parseFloat(trueDist.toFixed(1)),
+        ir1: trueIr1,
+        ir2: trueIr2,
+        pir: Math.random() < 0.05 ? 1 : 0,
+        temp_c: 28.5 + (Math.random() - 0.5) * 0.2,
+        humidity_pct: 65.0 + (Math.random() - 0.5) * 0.4
+      };
+
+      // Apply Spoof
+      if (simSpoof === "blindspot") {
+        reading.ultrasonic_cm = 145.0;
+        reading.ir1 = 1;
+        reading.ir2 = 1;
+      } else if (simSpoof === "ghost_wall") {
+        reading.ultrasonic_cm = 5.2;
+        reading.ir1 = 0;
+        reading.ir2 = 0;
+      } else if (simSpoof === "freeze") {
+        reading.ultrasonic_cm = 42.0;
+      } else if (simSpoof === "jitter") {
+        reading.ultrasonic_cm = Math.random() > 0.5 ? 95.0 : 15.0;
+      }
+
+      // Compute Score & Penalties
+      let pCross = 0, pJitter = 0, pFreeze = 0, details = [];
+
+      if ((reading.ir1 || reading.ir2) && reading.ultrasonic_cm > 35.0) {
+        pCross = 45.0;
+        details.push("Cross-modal contradiction: IR triggered but ultrasonic reports clear path");
+      } else if (reading.ultrasonic_cm < 8.0 && !reading.ir1 && !reading.ir2) {
+        pCross = 35.0;
+        details.push("Ghost wall: ultrasonic reports < 8cm while optical IR is clear");
+      }
+
+      if (simSpoof === "jitter") {
+        pJitter = 40.0;
+        details.push("Implausible acoustic jitter spike");
+      } else if (simSpoof === "freeze") {
+        pFreeze = 40.0;
+        details.push("Sensor freeze/replay attack: variance = 0.00");
+      }
+
+      const rawP = pCross + pJitter + pFreeze;
+      let pMult = 1.0;
+      if (rawP > 5.0) {
+        simConsecutive++;
+        pMult = Math.min(2.2, 1.0 + (simConsecutive - 1) * 0.3);
+      } else {
+        simConsecutive = Math.max(0, simConsecutive - 1);
+      }
+
+      const targetScore = Math.max(0, 100 - (rawP * pMult));
+      const alpha = targetScore < simScore ? 0.45 : 0.2;
+      simScore = (alpha * targetScore) + ((1 - alpha) * simScore);
+
+      let newState = "NOMINAL";
+      if (simScore < 30.0) newState = "SAFE-STOP";
+      else if (simScore < 65.0) newState = "LIMP-HOME";
+      else if (simScore < 90.0) newState = "DEGRADED";
+
+      const stateChanged = newState !== simCurrentState;
+      const reason = details[0] || `Score reached ${Math.round(simScore)}%`;
+      simCurrentState = newState;
+
+      updateUI(
+        reading,
+        simScore,
+        newState,
+        { cross_modal: pCross, jitter: pJitter, freeze: pFreeze, persistence_mult: parseFloat(pMult.toFixed(2)) },
+        details,
+        stateChanged,
+        reason
+      );
+    }
+
+    // Auto connect on page load
+    window.addEventListener("load", () => {
+      connectWebSocket("ws://localhost:8765");
+    });
+  </script>
+</body>
+</html>
