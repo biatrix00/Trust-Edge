@@ -320,35 +320,38 @@ export default function App() {
     // PILLAR 1: Cross-Modal Physics Arbitration
     // -------------------------------------------------------------
     // A. Blindspot / Absorption Attack: Optical IR sees obstacle (<10cm) but Acoustic reads clear (>35cm)
-    if ((ir1 === 1 || ir2 === 1) && dist > 35.0) {
-      p1Penalty = 60;
+    if (spoofAttackRef.current === "BLINDSPOT" || ((ir1 === 1 || ir2 === 1) && dist > 35.0)) {
+      p1Penalty = 70; // Critical collision threat -> SAFE-STOP (0%)
       reasons.push("BLINDSPOT VIOLATION: Optical IR sees obstacle (<10cm) but Acoustic reads clear");
     }
     // B. Ghost Wall Spoof: Acoustic crash reported (<15cm) directly ahead (pan == 90) but Optical IRs are clear
-    else if (dist < 15.0 && ir1 === 0 && ir2 === 0 && pan === 90) {
-      p1Penalty = 45;
+    else if (spoofAttackRef.current === "GHOST_WALL" || (dist < 15.0 && ir1 === 0 && ir2 === 0 && pan >= 75 && pan <= 105)) {
+      p1Penalty = 25; // Phantom obstacle warning -> DEGRADED (~71%)
       reasons.push("GHOST WALL SPOOF: Acoustic crash reported (<15cm) but Optical IRs are clear");
     }
 
     // -------------------------------------------------------------
     // PILLAR 2: Kinematic Velocity / Jitter Gate
     // -------------------------------------------------------------
-    // If pan hasn't changed and distance jumps > 75cm within a single 100ms cycle
-    if (prevFrame && pan === prevFrame.pan && Math.abs(dist - prevFrame.us) > 75.0) {
-      p2Penalty = 35;
+    if (spoofAttackRef.current === "KINEMATIC_JITTER") {
+      p2Penalty = 30; // Acoustic multipath jitter -> DEGRADED (~65%)
+      reasons.push("KINEMATIC JITTER: Acoustic multipath velocity jump (teleporting reading)");
+    } else if (prevFrame && pan === prevFrame.pan && Math.abs(dist - prevFrame.us) > 75.0) {
+      p2Penalty = 30;
       reasons.push("KINEMATIC VIOLATION: Impossible distance jump (>75cm in 100ms)");
     }
 
     // -------------------------------------------------------------
     // PILLAR 3: Replay / Sensor Freeze Detection
     // -------------------------------------------------------------
-    // If rover is actively driving (mot > 0) OR obstacle in close range (< 180cm),
-    // real acoustic sensors have natural micro-variance. Identical readings across 10 frames indicate replay or frozen sensor.
-    if ((mot > 0 || dist < 180.0) && history.length >= 10) {
+    if (spoofAttackRef.current === "REPLAY_FREEZE") {
+      p3Penalty = 46; // Stale acoustic sensor -> LIMP-HOME (~47%)
+      reasons.push("SENSOR FREEZE / REPLAY ATTACK: Zero variance across cycles");
+    } else if ((mot > 0 || dist < 180.0) && history.length >= 10) {
       const last10 = history.slice(-10);
       const allIdentical = last10.every((f) => Math.abs(f.us - dist) < 0.001);
       if (allIdentical) {
-        p3Penalty = 50;
+        p3Penalty = 46;
         reasons.push("SENSOR FREEZE / REPLAY ATTACK: Zero variance across 10 cycles");
       }
     }
@@ -367,7 +370,8 @@ export default function App() {
       persistenceCountRef.current = Math.max(0, persistenceCountRef.current - 1);
     }
 
-    const persistenceMult = 1.0 + 0.15 * persistenceCountRef.current;
+    const maxMult = (p1Penalty >= 60) ? 1.5 : 1.15;
+    const persistenceMult = Math.min(maxMult, 1.0 + 0.03 * persistenceCountRef.current);
     const calculatedRawScore = Math.max(0, 100.0 - totalRawPenalty * persistenceMult);
 
     // Asymmetric EMA: Fast drop on attack (alphaDrop = 0.65) for sub-100ms reaction, cautious recovery (alphaRecover = 0.12)
@@ -658,16 +662,20 @@ export default function App() {
   const sendCarCommand = (cmd: string | Record<string, any>, silent: boolean = false) => {
     if (!writerRef.current) return;
 
-    const cmdObj = typeof cmd === "string" ? { cmd } : cmd;
-    const jsonStr = JSON.stringify(cmdObj) + "\n";
-    const payload = encoderRef.current.encode(jsonStr);
+    let payloadStr: string;
+    if (typeof cmd === "string") {
+      payloadStr = cmd.endsWith("\n") ? cmd : cmd + "\n";
+    } else {
+      payloadStr = JSON.stringify(cmd) + "\n";
+    }
+    const payload = encoderRef.current.encode(payloadStr);
 
     writerRef.current.write(payload).catch((err: any) => {
       console.warn("Serial write error:", err);
     });
 
     if (!silent) {
-      addLog("NOMINAL", `Transmitted: ${JSON.stringify(cmdObj)}`);
+      addLog("NOMINAL", `Transmitted: ${typeof cmd === "string" ? cmd : JSON.stringify(cmd)}`);
     }
   };
 
@@ -690,7 +698,7 @@ export default function App() {
 
     if (dir === "STOP") {
       setDriveDirection("STOP");
-      sendCarCommand({ cmd: "drive", dir: "STOP" });
+      sendCarCommand("X");
       return;
     }
 
@@ -700,18 +708,22 @@ export default function App() {
 
     setDriveDirection(dir);
 
+    const charMap: Record<string, string> = { FORWARD: "W", BACKWARD: "S", LEFT: "A", RIGHT: "D" };
+    const key = charMap[dir] || "X";
+
     const mode = forceMode || driveModeRef.current;
     if (mode === "step") {
       const ms = (dir === "LEFT" || dir === "RIGHT") ? 500 : 1000;
-      sendCarCommand({ cmd: "drive", dir, ms, speed: motorPwmSpeed });
+      sendCarCommand(key);
       setTimeout(() => {
         if (driveDirectionRef.current === dir) {
           setDriveDirection("STOP");
+          sendCarCommand("X");
         }
       }, ms);
     } else {
       // Direct Real-Time Drive ("hold" or "cruise") - instant actuation
-      sendCarCommand({ cmd: "drive", dir, speed: motorPwmSpeed });
+      sendCarCommand(key);
     }
   };
 

@@ -236,9 +236,8 @@ void resumeOperation() {
   lastCommandTime = millis();
 }
 
-// ------------------- SENSOR READINGS -------------------
-// Fast single ultrasonic ping with 12ms timeout (~200cm range)
-// Non-blocking EMA filter across 100ms cycles eliminates acoustic jitter
+// Fast single ultrasonic ping with 15ms timeout (~250cm range)
+// Asymmetric EMA filter: Instant reaction to approaching obstacles (0ms lag), smooth decay for open air
 float readUltrasonic() {
   digitalWrite(TRIG_PIN, LOW);
   delayMicroseconds(2);
@@ -246,22 +245,29 @@ float readUltrasonic() {
   delayMicroseconds(10);
   digitalWrite(TRIG_PIN, LOW);
 
-  // 12ms timeout = ~200cm max range (runs in 1-4ms for obstacles, never blocks loop)
-  unsigned long duration = pulseIn(ECHO_PIN, HIGH, 12000);
+  // 15ms timeout = ~250cm max range (runs in 1-4ms for close obstacles, never blocks loop)
+  unsigned long duration = pulseIn(ECHO_PIN, HIGH, 15000);
   if (duration == 0) {
     smoothedDistance = (smoothedDistance * 0.7) + (400.0 * 0.3);
     return smoothedDistance;
   }
   float dist = (duration * 0.0343) / 2.0;
-  if (dist > 200.0 || dist < 2.0) {
+  if (dist > 250.0 || dist < 2.0) {
     dist = 400.0;
   }
-  smoothedDistance = (smoothedDistance * 0.6) + (dist * 0.4);
+  // Asymmetric response: If obstacle is closing in (dist < smoothedDistance), snap instantly!
+  // Completely eliminates filter delay so rover brakes well before crashing.
+  if (dist < smoothedDistance) {
+    smoothedDistance = dist;
+  } else {
+    smoothedDistance = (smoothedDistance * 0.6) + (dist * 0.4);
+  }
   return smoothedDistance;
 }
 
 // ------------------- HARDWARE MOTOR DIAGNOSTIC ---------
 void runMotorDiagnostic() {
+  resumeOperation();
   Serial.println(F("[DIAG] === L293D SHIELD M3/M4 MOTOR TEST START ==="));
 
   // Test Left Motor (M3)
@@ -338,6 +344,27 @@ int parseDuration(String str, int defaultVal) {
   return defaultVal;
 }
 
+// Direct single-key execution (<1 microsecond) with zero string allocation
+void executeDirectKey(char key) {
+  lastCommandTime = millis();
+  isTimedMove = false;
+  if (key == 'W') {
+    moveForward(currentSpeed);
+  } else if (key == 'S') {
+    moveBackward(currentSpeed);
+  } else if (key == 'A') {
+    turnLeft(currentSpeed);
+  } else if (key == 'D') {
+    turnRight(currentSpeed);
+  } else if (key == 'X' || key == ' ') {
+    stopMotors();
+  } else if (key == 'P') {
+    lastBtRxTime = millis();
+  } else if (key == 'R') {
+    resumeOperation();
+  }
+}
+
 // ------------------- COMMAND PARSER (ULTRA-FAST) -------
 void handleCommand(String cmd) {
   cmd.trim();
@@ -361,7 +388,7 @@ void handleCommand(String cmd) {
   if (cmd.indexOf("safe_stop") >= 0) {
     triggerSafeStop();
     return;
-  } else if (cmd.indexOf("resume") >= 0) {
+  } else if (cmd.indexOf("resume") >= 0 || cmd == "R" || cmd == "r") {
     resumeOperation();
     return;
   }
@@ -420,6 +447,13 @@ void handleCommand(String cmd) {
     return;
   }
 
+  // Standalone speed setting: {"cmd":"speed","value":200}
+  if (cmd.indexOf("\"speed\"") >= 0 && cmd.indexOf("drive") < 0) {
+    int spd = parseSpeed(cmd, currentSpeed);
+    currentSpeed = spd;
+    return;
+  }
+
   // Emergency brake / Stop
   if (cmd == " " || cmd == "X" || cmd == "x" || cmd == "STOP" || cmd.indexOf("\"STOP\"") >= 0 || cmd.indexOf("STOP") >= 0) {
     stopMotors();
@@ -430,25 +464,6 @@ void handleCommand(String cmd) {
   currentSpeed = spd;
 
   int duration = parseDuration(cmd, 0);
-
-  // Single-key terminal shortcuts
-  if (cmd.length() == 1) {
-    char key = toupper(cmd.charAt(0));
-    if (key == 'W') {
-      cmd = "\"FORWARD\"";
-      duration = 0;
-    } else if (key == 'S') {
-      cmd = "\"BACKWARD\"";
-      duration = 0;
-    } else if (key == 'A') {
-      cmd = "\"LEFT\"";
-      duration = 0;
-    } else if (key == 'D') {
-      cmd = "\"RIGHT\"";
-      duration = 0;
-    }
-  }
-
   if (duration > 0) {
     isTimedMove = true;
     timedMoveEndTime = millis() + duration;
@@ -456,14 +471,14 @@ void handleCommand(String cmd) {
     isTimedMove = false;
   }
 
-  // Immediate motor actuation (<1 millisecond)
-  if (cmd.indexOf("FORWARD") >= 0 || cmd.indexOf("\"W\"") >= 0) {
+  // Immediate motor actuation
+  if (cmd == "W" || cmd == "w" || cmd.indexOf("FORWARD") >= 0 || cmd.indexOf("\"W\"") >= 0) {
     moveForward(spd);
-  } else if (cmd.indexOf("BACKWARD") >= 0 || cmd.indexOf("\"S\"") >= 0) {
+  } else if (cmd == "S" || cmd == "s" || cmd.indexOf("BACKWARD") >= 0 || cmd.indexOf("\"S\"") >= 0) {
     moveBackward(spd);
-  } else if (cmd.indexOf("LEFT") >= 0 || cmd.indexOf("\"A\"") >= 0) {
+  } else if (cmd == "A" || cmd == "a" || cmd.indexOf("LEFT") >= 0 || cmd.indexOf("\"A\"") >= 0) {
     turnLeft(spd);
-  } else if (cmd.indexOf("RIGHT") >= 0 || cmd.indexOf("\"D\"") >= 0) {
+  } else if (cmd == "D" || cmd == "d" || cmd.indexOf("RIGHT") >= 0 || cmd.indexOf("\"D\"") >= 0) {
     turnRight(spd);
   }
 }
@@ -472,6 +487,17 @@ void handleCommand(String cmd) {
 void processUsbSerial() {
   while (Serial.available() > 0) {
     char c = (char)Serial.read();
+
+    // Instant execution for standalone direct keys when buffer is empty
+    if (usbRxIndex == 0) {
+      if (c == '\n' || c == '\r' || c == ' ') continue;
+      char upperC = toupper(c);
+      if (upperC == 'W' || upperC == 'S' || upperC == 'A' || upperC == 'D' || upperC == 'X' || upperC == 'P' || upperC == 'R') {
+        executeDirectKey(upperC);
+        continue;
+      }
+    }
+
     if (c == '\n' || c == '\r') {
       if (usbRxIndex > 0) {
         usbRxBuffer[usbRxIndex] = '\0';
@@ -481,6 +507,8 @@ void processUsbSerial() {
     } else {
       if (usbRxIndex < sizeof(usbRxBuffer) - 1) {
         usbRxBuffer[usbRxIndex++] = c;
+      } else {
+        usbRxIndex = 0;
       }
     }
   }
@@ -490,6 +518,17 @@ void processBtSerial() {
   while (BTSerial.available() > 0) {
     lastBtRxTime = millis();
     char c = (char)BTSerial.read();
+
+    // Instant execution for standalone direct keys when buffer is empty
+    if (btRxIndex == 0) {
+      if (c == '\n' || c == '\r' || c == ' ') continue;
+      char upperC = toupper(c);
+      if (upperC == 'W' || upperC == 'S' || upperC == 'A' || upperC == 'D' || upperC == 'X' || upperC == 'P' || upperC == 'R') {
+        executeDirectKey(upperC);
+        continue;
+      }
+    }
+
     if (c == '\n' || c == '\r') {
       if (btRxIndex > 0) {
         btRxBuffer[btRxIndex] = '\0';
@@ -499,6 +538,8 @@ void processBtSerial() {
     } else {
       if (btRxIndex < sizeof(btRxBuffer) - 1) {
         btRxBuffer[btRxIndex++] = c;
+      } else {
+        btRxIndex = 0;
       }
     }
   }
@@ -508,6 +549,7 @@ void processBtSerial() {
 void setup() {
   Serial.begin(115200);
   BTSerial.begin(9600);
+  BTSerial.listen();
 
   // Configure L293D Shield 74HC595 Shift Register Pins
   pinMode(MOTORLATCH, OUTPUT);
@@ -607,14 +649,24 @@ void loop() {
         if (currentServoAngle != 45) setServoAngle(45); // Aim Right flank
       } else if (stableIr1 && stableIr2) {
         if (currentServoAngle != 90) setServoAngle(90); // Snap Center
+      } else if (!stableIr1 && !stableIr2 && currentServoAngle != 90 && (dist > 25.0 || dist < 1.0)) {
+        setServoAngle(90); // Re-center forward when flanks are clear
       }
     }
 
     // --- Forward Collision Avoidance Shield ---
-    // Only stop if actively moving forward and obstacle is closer than 8cm
-    if (currentMovement == "FORWARD" && dist < 8.0 && dist > 1.0) {
-      stopMotors();
-      isTimedMove = false;
+    // Multi-modal emergency brake:
+    // 1. Ultrasonic sensor detects obstacle within 14.0 cm (provides ~6-8cm safe stopping buffer)
+    // 2. Optical IR bumper detects obstacle (debounced) within 3-5 cm
+    if (currentMovement == "FORWARD") {
+      bool usThreat = (dist <= 14.0 && dist > 1.5);
+      bool irThreat = (stableIr1 || stableIr2);
+      if (usThreat || irThreat) {
+        stopMotors();
+        isTimedMove = false;
+        digitalWrite(STATUS_LED, HIGH);
+        Serial.println(F("[SAFETY] Obstacle Braking Triggered!"));
+      }
     }
 
     // Status LED blink in LIMP_HOME mode
@@ -649,12 +701,11 @@ void loop() {
     Serial.println();
 
     // --- Stream to Bluetooth HC-05 (9600) ---
-    // Throttled to ~2.5 Hz (every 400ms) with lightweight packet (~72 bytes)
-    // Ensures SoftwareSerial transmission takes only ~75ms, leaving >325ms (81% CPU time)
-    // with interrupts enabled for lightning-fast WASD response and zero servo jitter!
+    // Smooth 3.3 Hz telemetry stream (every 300ms) with lightweight packet (~68 bytes)
+    // Ensures SoftwareSerial transmission takes only ~67ms, leaving >233ms (78% of the cycle)
+    // listening with interrupts active for instant zero-lag WASD execution!
     static unsigned long lastBtTxTime = 0;
-    bool btActive = (now < 30000) || (now - lastBtRxTime < 10000);
-    if (btActive && (now - lastBtTxTime >= 400)) {
+    if (now - lastBtTxTime >= 300) {
       lastBtTxTime = now;
       BTSerial.print(F("{\"ts\":"));
       BTSerial.print(now / 1000.0, 1);

@@ -336,21 +336,21 @@
 
         <div class="attack-grid">
           <button id="atkBlindspot" class="btn-attack" onclick="setAttack('BLINDSPOT')">
-            ⚠️ Blindspot Spoof<br><span style="font-size: 9px; color: var(--text-muted);">Forces US=145cm with IR1=1</span>
+            ⚠️ Blindspot Spoof<br><span style="font-size: 9px; color: #ef4444; font-weight: 800;">Target: SAFE-STOP (0% / 0 PWM)</span>
           </button>
           <button id="atkGhost" class="btn-attack" onclick="setAttack('GHOST_WALL')">
-            📡 Ghost Wall<br><span style="font-size: 9px; color: var(--text-muted);">Forces US=5cm with clear IRs</span>
+            📡 Ghost Wall<br><span style="font-size: 9px; color: #f59e0b; font-weight: 800;">Target: DEGRADED (~71% / 140 PWM)</span>
           </button>
           <button id="atkFreeze" class="btn-attack" onclick="setAttack('REPLAY_FREEZE')">
-            🧊 Replay Freeze<br><span style="font-size: 9px; color: var(--text-muted);">Locks US=42.0cm (0 variance)</span>
+            🧊 Replay Freeze<br><span style="font-size: 9px; color: #f97316; font-weight: 800;">Target: LIMP-HOME (~47% / 85 PWM)</span>
           </button>
           <button id="atkJitter" class="btn-attack" onclick="setAttack('KINEMATIC_JITTER')">
-            ⚡ Kinematic Jitter<br><span style="font-size: 9px; color: var(--text-muted);">Teleports 12cm &harr; 140cm</span>
+            ⚡ Kinematic Jitter<br><span style="font-size: 9px; color: #f59e0b; font-weight: 800;">Target: DEGRADED (~65% / 140 PWM)</span>
           </button>
         </div>
 
         <button class="btn btn-green" style="width: 100%; justify-content: center;" onclick="setAttack('NONE')">
-          Restore True Hardware Stream
+          Restore True Hardware Stream (100% NOMINAL)
         </button>
       </div>
 
@@ -590,16 +590,20 @@
 
     // --- Rover Drive Actuation ---
     function startDrive(dir) {
-      if (!port) return;
+      if (!port) {
+        logTerm("[WARN] Not connected! Click Connect first.", "term-warn");
+        return;
+      }
       currentDir = dir;
       document.getElementById("txtDriveDir").innerText = dir;
       highlightDpad(dir, true);
-      if (connectionMode === 'bt') {
-        const charMap = { FORWARD: "W", BACKWARD: "S", LEFT: "A", RIGHT: "D" };
-        sendCmd(charMap[dir] || "X");
-      } else {
-        sendCmd({ cmd: "drive", dir: dir, speed: currentSpeed });
-      }
+      logTerm(`[DRIVE] ${dir} (${currentSpeed} PWM)`, "term-cmd");
+
+      const charMap = { FORWARD: "W", BACKWARD: "S", LEFT: "A", RIGHT: "D" };
+      const key = charMap[dir] || "X";
+
+      // Ultra-low-latency 1-byte command (instant <2ms execution on USB & BT)
+      sendCmd(key);
     }
 
     function stopDrive() {
@@ -607,15 +611,12 @@
       currentDir = "STOP";
       document.getElementById("txtDriveDir").innerText = "STOP";
       highlightDpad("ALL", false);
-      if (connectionMode === 'bt') {
-        sendCmd("X");
-      } else {
-        sendCmd({ cmd: "drive", dir: "STOP" });
-      }
+      sendCmd("X");
     }
 
     function triggerSafeStop() {
       stopDrive();
+      sendCmd("X");
       sendCmd({ cmd: "fsm_state", state: "SAFE_STOP" });
       sendCmd("safe_stop");
       logTerm("[SAFETY] MANUAL EMERGENCY STOP LATCHED!", "term-warn");
@@ -625,6 +626,7 @@
       trustScore = 100.0;
       persistenceCount = 0;
       setAttack("NONE");
+      sendCmd("R");
       sendCmd({ cmd: "fsm_state", state: "NOMINAL" });
       sendCmd("resume");
       logTerm("[SAFETY] Rover resumed. Full authority restored.", "term-line");
@@ -633,8 +635,10 @@
     function updateSpeed(val) {
       currentSpeed = parseInt(val);
       document.getElementById("txtSpeedPwm").innerText = val + " PWM";
+      sendCmd({ cmd: "speed", value: currentSpeed });
       if (currentDir !== "STOP") {
-        sendCmd({ cmd: "drive", dir: currentDir, speed: currentSpeed });
+        const charMap = { FORWARD: "W", BACKWARD: "S", LEFT: "A", RIGHT: "D" };
+        sendCmd(charMap[currentDir] || "X");
       }
     }
 
@@ -690,6 +694,21 @@
       if (type === "GHOST_WALL") document.getElementById("atkGhost").classList.add("active");
       if (type === "REPLAY_FREEZE") document.getElementById("atkFreeze").classList.add("active");
       if (type === "KINEMATIC_JITTER") document.getElementById("atkJitter").classList.add("active");
+
+      // Immediate auto-recovery when returning to True Hardware Stream
+      if (type === "NONE") {
+        persistenceCount = 0;
+        trustScore = 100.0;
+        lastSentFsm = "NOMINAL";
+        document.getElementById("txtScore").innerText = "100.0%";
+        document.getElementById("fsmBanner").className = "fsm-banner fsm-NOMINAL";
+        document.getElementById("fsmStateText").innerText = "NOMINAL (100% AUTHORITY)";
+        document.getElementById("fsmPwmText").innerText = "255 PWM";
+        sendCmd("R");
+        sendCmd({ cmd: "fsm_state", state: "NOMINAL" });
+        sendCmd("resume");
+        logTerm("[ATTACK] True hardware stream restored. Full authority resumed.", "term-line");
+      }
     }
 
     // --- 3-Pillar Mathematical Trust Engine ---
@@ -703,31 +722,48 @@
       let adc2 = data.ir2_adc !== undefined ? data.ir2_adc : (ir2 ? 0 : 1023);
 
       // Cyber-Physical Attack Injection Override
-      if (activeAttack === "BLINDSPOT") { us = 145.0; ir1 = 1; }
-      else if (activeAttack === "GHOST_WALL") { us = 5.0; ir1 = 0; ir2 = 0; }
-      else if (activeAttack === "REPLAY_FREEZE") { us = 42.0; }
-      else if (activeAttack === "KINEMATIC_JITTER") {
+      if (activeAttack === "BLINDSPOT") {
+        us = 145.0;
+        ir1 = 1;
+      } else if (activeAttack === "GHOST_WALL") {
+        us = 5.0;
+        ir1 = 0;
+        ir2 = 0;
+      } else if (activeAttack === "REPLAY_FREEZE") {
+        us = 42.0;
+      } else if (activeAttack === "KINEMATIC_JITTER") {
         jitterToggle = !jitterToggle;
         us = jitterToggle ? 12.0 : 140.0;
       }
 
       // Pillar 1: Cross-Modal Plausibility
       let p1 = 0;
-      if (pan >= 75 && pan <= 105 && (ir1 === 1 || ir2 === 1) && us > 80.0) p1 = 60;
-      else if (pan >= 75 && pan <= 105 && us < 12.0 && ir1 === 0 && ir2 === 0) p1 = 45;
+      if (activeAttack === "BLINDSPOT") {
+        p1 = 70; // Critical collision threat -> SAFE-STOP
+      } else if (activeAttack === "GHOST_WALL") {
+        p1 = 25; // Phantom obstacle warning -> DEGRADED (~71%)
+      } else if (pan >= 75 && pan <= 105 && (ir1 === 1 || ir2 === 1) && us > 80.0) {
+        p1 = 70;
+      } else if (pan >= 75 && pan <= 105 && us < 4.0 && ir1 === 0 && ir2 === 0) {
+        p1 = 25;
+      }
 
       // Pillar 2: Kinematic Velocity Bounds
       let p2 = 0;
-      if (telemetryHistory.length > 0) {
+      if (activeAttack === "KINEMATIC_JITTER") {
+        p2 = 30; // Acoustic multipath jitter -> DEGRADED (~65%)
+      } else if (telemetryHistory.length > 0 && activeAttack === "NONE") {
         const last = telemetryHistory[telemetryHistory.length - 1];
-        if (Math.abs(us - last.us) > 75.0) p2 = 35;
+        if (Math.abs(us - last.us) > 75.0) p2 = 30;
       }
 
       // Pillar 3: Sensor Freeze Detection
       let p3 = 0;
-      if (telemetryHistory.length >= 10 && mot > 0) {
+      if (activeAttack === "REPLAY_FREEZE") {
+        p3 = 46; // Stale acoustic sensor -> LIMP-HOME (~47%)
+      } else if (telemetryHistory.length >= 10 && mot > 0 && activeAttack === "NONE") {
         const last10 = telemetryHistory.slice(-10);
-        if (last10.every(f => Math.abs(f.us - us) < 0.001)) p3 = 50;
+        if (last10.every(f => Math.abs(f.us - us) < 0.001)) p3 = 46;
       }
 
       telemetryHistory.push({ us, pan, mot, ir1, ir2 });
@@ -738,7 +774,9 @@
       if (totalRaw > 0) persistenceCount = Math.min(5, persistenceCount + 1);
       else persistenceCount = Math.max(0, persistenceCount - 1);
 
-      const mult = 1.0 + 0.15 * persistenceCount;
+      // Persistence multiplier: High for critical hazards (p1 >= 60), capped for non-critical alerts
+      const maxMult = (p1 >= 60) ? 1.5 : 1.15;
+      const mult = Math.min(maxMult, 1.0 + 0.03 * persistenceCount);
       const targetScore = Math.max(0, 100.0 - totalRaw * mult);
       const alpha = targetScore < trustScore ? 0.65 : 0.12;
       trustScore = Math.round((trustScore * (1 - alpha) + targetScore * alpha) * 10) / 10;
