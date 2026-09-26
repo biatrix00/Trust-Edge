@@ -1,0 +1,870 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>TrustEdge Rover Ground Station (Zero-Lag Standalone)</title>
+  <style>
+    :root {
+      --bg: #090d16;
+      --card-bg: #111827;
+      --border: #1f2937;
+      --text: #f3f4f6;
+      --text-muted: #9ca3af;
+      --nominal: #10b981;
+      --degraded: #f59e0b;
+      --limp: #f97316;
+      --safestop: #ef4444;
+      --cyan: #06b6d4;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      background-color: var(--bg);
+      color: var(--text);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      min-height: 100vh;
+      padding: 16px;
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+    }
+    .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; }
+    header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      background: var(--card-bg);
+      padding: 12px 20px;
+      border-radius: 14px;
+      border: 1px solid var(--border);
+      flex-wrap: wrap;
+      gap: 12px;
+    }
+    .header-left { display: flex; align-items: center; gap: 12px; }
+    .badge-pill {
+      font-size: 10px;
+      font-weight: 700;
+      padding: 3px 8px;
+      border-radius: 9999px;
+      background: rgba(6, 182, 212, 0.15);
+      color: var(--cyan);
+      border: 1px solid rgba(6, 182, 212, 0.4);
+      text-transform: uppercase;
+    }
+    .btn {
+      padding: 8px 14px;
+      border-radius: 10px;
+      border: 1px solid var(--border);
+      background: #1f2937;
+      color: #fff;
+      font-size: 12px;
+      font-weight: 700;
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      transition: all 0.15s;
+    }
+    .btn:hover { background: #374151; }
+    .btn-cyan { background: #0891b2; border-color: #06b6d4; }
+    .btn-cyan:hover { background: #06b6d4; color: #000; }
+    .btn-red { background: #991b1b; border-color: #ef4444; }
+    .btn-red:hover { background: #dc2626; }
+    .btn-green { background: #065f46; border-color: #10b981; }
+    .btn-green:hover { background: #059669; }
+    .btn:disabled { opacity: 0.4; cursor: not-allowed; }
+
+    .grid-container {
+      display: grid;
+      grid-template-columns: repeat(12, 1fr);
+      gap: 16px;
+    }
+    .col-3 { grid-column: span 3; }
+    .col-5 { grid-column: span 5; }
+    .col-4 { grid-column: span 4; }
+    @media (max-width: 1024px) {
+      .col-3, .col-5, .col-4 { grid-column: span 12; }
+    }
+
+    .panel {
+      background: var(--card-bg);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      padding: 16px;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+    .panel-title {
+      font-size: 11px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      color: var(--text-muted);
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+
+    /* D-Pad Driving Grid */
+    .dpad-grid {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 8px;
+      max-width: 220px;
+      margin: 0 auto;
+    }
+    .dpad-btn {
+      aspect-ratio: 1;
+      border-radius: 10px;
+      border: 1px solid var(--border);
+      background: #1f2937;
+      color: #fff;
+      font-size: 18px;
+      font-weight: 900;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      user-select: none;
+    }
+    .dpad-btn:active, .dpad-btn.active {
+      background: var(--cyan);
+      color: #000;
+      transform: scale(0.95);
+    }
+    .dpad-btn:disabled { opacity: 0.3; cursor: not-allowed; }
+
+    /* FSM Banner */
+    .fsm-banner {
+      padding: 12px;
+      border-radius: 10px;
+      font-weight: 800;
+      font-size: 14px;
+      text-align: center;
+      border: 1px solid var(--border);
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+    .fsm-NOMINAL { background: rgba(16, 185, 129, 0.15); border-color: var(--nominal); color: var(--nominal); }
+    .fsm-DEGRADED { background: rgba(245, 158, 11, 0.15); border-color: var(--degraded); color: var(--degraded); }
+    .fsm-LIMP_HOME { background: rgba(249, 115, 22, 0.15); border-color: var(--limp); color: var(--limp); }
+    .fsm-SAFE_STOP { background: rgba(239, 68, 68, 0.2); border-color: var(--safestop); color: var(--safestop); }
+
+    /* Radar Canvas Box */
+    .radar-box {
+      height: 160px;
+      background: #030712;
+      border-radius: 10px;
+      border: 1px solid var(--border);
+      position: relative;
+      overflow: hidden;
+      display: flex;
+      align-items: flex-end;
+      justify-content: center;
+    }
+    .radar-needle {
+      position: absolute;
+      bottom: 8px;
+      width: 100px;
+      height: 130px;
+      transform-origin: bottom center;
+      background: linear-gradient(to top, rgba(6, 182, 212, 0.4), transparent);
+      clip-path: polygon(45% 100%, 55% 100%, 75% 0, 25% 0);
+      will-change: transform;
+      transition: transform 0.2s ease-out;
+    }
+
+    /* Terminal Console */
+    .term-box {
+      height: 180px;
+      background: #030712;
+      border-radius: 10px;
+      border: 1px solid var(--border);
+      padding: 8px;
+      font-size: 11px;
+      overflow-y: auto;
+      display: flex;
+      flex-direction: column;
+      gap: 3px;
+    }
+    .term-line { color: #10b981; }
+    .term-cmd { color: var(--cyan); }
+    .term-warn { color: var(--safestop); }
+
+    /* Attack Grid */
+    .attack-grid {
+      display: grid;
+      grid-template-columns: repeat(2, 1fr);
+      gap: 6px;
+    }
+    .btn-attack {
+      padding: 7px 10px;
+      border-radius: 8px;
+      border: 1px solid var(--border);
+      background: #111827;
+      color: #d1d5db;
+      font-size: 11px;
+      font-weight: 700;
+      text-align: left;
+      cursor: pointer;
+    }
+    .btn-attack:hover { background: #1f2937; }
+    .btn-attack.active { background: #7f1d1d; border-color: #ef4444; color: #fee2e2; }
+  </style>
+</head>
+<body>
+
+  <!-- Top Header Navigation -->
+  <header>
+    <div class="header-left">
+      <div style="font-size: 18px; font-weight: 900; color: #fff;">TrustEdge Rover Cockpit</div>
+      <span class="badge-pill">Zero-Lag Standalone Edition</span>
+      <span id="connBadge" class="badge-pill" style="color: var(--text-muted); border-color: var(--border);">DISCONNECTED</span>
+    </div>
+    <div style="display: flex; align-items: center; gap: 8px;">
+      <button id="btnConnectUsb" class="btn btn-cyan" onclick="toggleConnect('usb')">
+        <span>🔌 Connect USB (115200)</span>
+      </button>
+      <button id="btnConnectBt" class="btn btn-cyan" style="background: #2563eb; border-color: #3b82f6;" onclick="toggleConnect('bt')">
+        <span>📶 Connect Bluetooth HC-05 (9600)</span>
+      </button>
+      <button class="btn btn-red" onclick="triggerSafeStop()">E-STOP</button>
+      <button class="btn btn-green" onclick="resumeRover()">RESUME</button>
+    </div>
+  </header>
+
+  <!-- 3-Column Main Grid -->
+  <div class="grid-container">
+
+    <!-- Column 1: Controls & FSM (3 Cols) -->
+    <div class="col-3" style="display: flex; flex-direction: column; gap: 16px;">
+      
+      <!-- FSM Status -->
+      <div class="panel">
+        <div class="panel-title">
+          <span>Trust Integrity Shield</span>
+          <span id="txtScore" class="mono" style="font-size: 14px; font-weight: 900; color: var(--nominal);">100.0%</span>
+        </div>
+        <div id="fsmBanner" class="fsm-banner fsm-NOMINAL">
+          <span id="fsmStateText">NOMINAL (100% AUTHORITY)</span>
+          <span id="fsmPwmText" class="mono">255 PWM</span>
+        </div>
+        <div style="font-size: 11px; color: var(--text-muted); line-height: 1.4;" id="fsmDesc">
+          All multi-modal sensors consistent. Full motor power authorized.
+        </div>
+      </div>
+
+      <!-- Real-Time Drive Controls (WASD) -->
+      <div class="panel">
+        <div class="panel-title">
+          <span>Drive Authority (WASD)</span>
+          <span id="txtDriveDir" class="mono" style="color: var(--cyan); font-weight: 700;">STOP</span>
+        </div>
+
+        <div class="dpad-grid">
+          <div></div>
+          <button id="btnW" class="dpad-btn" onmousedown="startDrive('FORWARD')" onmouseup="stopDrive()" ontouchstart="startDrive('FORWARD')" ontouchend="stopDrive()">W</button>
+          <div></div>
+          <button id="btnA" class="dpad-btn" onmousedown="startDrive('LEFT')" onmouseup="stopDrive()" ontouchstart="startDrive('LEFT')" ontouchend="stopDrive()">A</button>
+          <button id="btnS" class="dpad-btn" onmousedown="startDrive('BACKWARD')" onmouseup="stopDrive()" ontouchstart="startDrive('BACKWARD')" ontouchend="stopDrive()">S</button>
+          <button id="btnD" class="dpad-btn" onmousedown="startDrive('RIGHT')" onmouseup="stopDrive()" ontouchstart="startDrive('RIGHT')" ontouchend="stopDrive()">D</button>
+        </div>
+
+        <div style="display: flex; flex-direction: column; gap: 4px; margin-top: 8px;">
+          <div style="display: flex; justify-content: space-between; font-size: 11px; color: var(--text-muted);">
+            <span>Motor Speed Ceiling:</span>
+            <span id="txtSpeedPwm" class="mono">255 PWM</span>
+          </div>
+          <input type="range" id="rngSpeed" min="80" max="255" value="255" oninput="updateSpeed(this.value)" style="width: 100%;">
+        </div>
+
+        <button class="btn" style="width: 100%; justify-content: center;" onclick="runDiagnostic()">
+          Run Hardware Diagnostic (Motors & Sensors)
+        </button>
+      </div>
+
+    </div>
+
+    <!-- Column 2: Sensors & Radar Sweep (5 Cols) -->
+    <div class="col-5" style="display: flex; flex-direction: column; gap: 16px;">
+      
+      <!-- MG90S Radar Pan Visualizer -->
+      <div class="panel">
+        <div class="panel-title">
+          <span>MG90S Tower Pro Radar & Ultrasonic</span>
+          <div style="display: flex; gap: 6px;">
+            <button id="btnSaccadic" class="btn" style="padding: 3px 8px; font-size: 10px;" onclick="toggleSaccadic()">Saccadic Reflex: ON</button>
+            <button id="btnAutoSweep" class="btn" style="padding: 3px 8px; font-size: 10px;" onclick="toggleAutoSweep()">Auto-Sweep</button>
+          </div>
+        </div>
+
+        <div class="radar-box">
+          <div id="radarNeedle" class="radar-needle"></div>
+          <div style="position: absolute; bottom: 8px; font-size: 11px; color: var(--text-muted); font-weight: 700;">
+            Pan Angle: <span id="txtPanAngle" class="mono" style="color: var(--cyan);">90°</span> | Distance: <span id="txtDistance" class="mono" style="color: #fff; font-weight: 800;">-- cm</span>
+          </div>
+        </div>
+
+        <!-- Sensor Table -->
+        <div style="display: flex; flex-direction: column; gap: 8px;">
+          <div style="display: flex; justify-content: space-between; background: #030712; padding: 10px 12px; border-radius: 8px; border: 1px solid var(--border);">
+            <div>
+              <div style="font-size: 12px; font-weight: 700;">Left Optical IR (Pin A0)</div>
+              <div id="txtIr1Adc" class="mono" style="font-size: 10px; color: var(--text-muted);">ADC: -- (5.00V)</div>
+            </div>
+            <span id="badgeIr1" class="badge-pill" style="color: var(--nominal); border-color: var(--nominal);">CLEAR</span>
+          </div>
+
+          <div style="display: flex; justify-content: space-between; background: #030712; padding: 10px 12px; border-radius: 8px; border: 1px solid var(--border);">
+            <div>
+              <div style="font-size: 12px; font-weight: 700;">Right Optical IR (Pin A1)</div>
+              <div id="txtIr2Adc" class="mono" style="font-size: 10px; color: var(--text-muted);">ADC: -- (5.00V)</div>
+            </div>
+            <span id="badgeIr2" class="badge-pill" style="color: var(--nominal); border-color: var(--nominal);">CLEAR</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Cyber-Physical Attack Injection Deck -->
+      <div class="panel">
+        <div class="panel-title">
+          <span>Cyber-Physical Attack Injection Deck</span>
+          <span id="txtAttackStatus" class="mono" style="font-size: 10px; color: var(--nominal);">TRUE HARDWARE STREAM</span>
+        </div>
+
+        <div class="attack-grid">
+          <button id="atkBlindspot" class="btn-attack" onclick="setAttack('BLINDSPOT')">
+            ⚠️ Blindspot Spoof<br><span style="font-size: 9px; color: var(--text-muted);">Forces US=145cm with IR1=1</span>
+          </button>
+          <button id="atkGhost" class="btn-attack" onclick="setAttack('GHOST_WALL')">
+            📡 Ghost Wall<br><span style="font-size: 9px; color: var(--text-muted);">Forces US=5cm with clear IRs</span>
+          </button>
+          <button id="atkFreeze" class="btn-attack" onclick="setAttack('REPLAY_FREEZE')">
+            🧊 Replay Freeze<br><span style="font-size: 9px; color: var(--text-muted);">Locks US=42.0cm (0 variance)</span>
+          </button>
+          <button id="atkJitter" class="btn-attack" onclick="setAttack('KINEMATIC_JITTER')">
+            ⚡ Kinematic Jitter<br><span style="font-size: 9px; color: var(--text-muted);">Teleports 12cm &harr; 140cm</span>
+          </button>
+        </div>
+
+        <button class="btn btn-green" style="width: 100%; justify-content: center;" onclick="setAttack('NONE')">
+          Restore True Hardware Stream
+        </button>
+      </div>
+
+    </div>
+
+    <!-- Column 3: Terminal & Historical Trend (4 Cols) -->
+    <div class="col-4" style="display: flex; flex-direction: column; gap: 16px;">
+      
+      <!-- Rolling Trust Score Trend Canvas -->
+      <div class="panel">
+        <div class="panel-title">
+          <span>Rolling Integrity Trend (60 Cycles)</span>
+          <span class="mono" style="font-size: 10px; color: var(--text-muted);">EMA 0.65 / 0.12</span>
+        </div>
+        <canvas id="cvScore" width="400" height="90" style="width: 100%; height: 90px; background: #030712; border-radius: 8px; border: 1px solid var(--border);"></canvas>
+      </div>
+
+      <!-- Raw Serial Console -->
+      <div class="panel" style="flex: 1;">
+        <div class="panel-title">
+          <span>Raw Serial Bus Monitor</span>
+          <span id="txtRateHz" class="mono" style="font-size: 10px; color: var(--cyan);">0 Hz</span>
+        </div>
+        <div id="termBox" class="term-box mono">
+          <div class="term-line">[INIT] Standalone Ground Station Ready. Click Connect.</div>
+        </div>
+        <div style="display: flex; gap: 6px;">
+          <input type="text" id="cmdInput" class="mono" placeholder='{"cmd":"servo_angle","value":90}' style="flex: 1; padding: 6px 10px; border-radius: 8px; background: #030712; border: 1px solid var(--border); color: #fff; font-size: 11px;" onkeydown="if(event.key==='Enter') sendCustomCmd()">
+          <button class="btn" onclick="sendCustomCmd()">Send</button>
+        </div>
+      </div>
+
+    </div>
+
+  </div>
+
+  <script>
+    // --- State Variables ---
+    let port = null, reader = null, writer = null, keepReading = false;
+    let connectionMode = null; // 'usb' | 'bt'
+    let btPingTimer = null;
+    let currentSpeed = 255, currentDir = "STOP", isSaccadic = true, isAutoScanning = false;
+    let panAngle = 90, autoScanIdx = 0, autoScanTimer = null;
+    let trustScore = 100.0, currentFsm = "NOMINAL", lastSentFsm = "NOMINAL";
+    let activeAttack = "NONE", jitterToggle = false;
+    let scoreHistory = new Array(60).fill(100);
+    let telemetryHistory = [];
+    let persistenceCount = 0;
+    let packetCount = 0, lastPacketCount = 0;
+    let pendingLines = [];
+    let hasNewLines = false;
+
+    // --- Key Listeners for WASD Driving ---
+    window.addEventListener("keydown", (e) => {
+      if (e.repeat || document.activeElement === document.getElementById("cmdInput")) return;
+      const k = e.key.toUpperCase();
+      if (k === "W" || k === "ARROWUP") { e.preventDefault(); startDrive("FORWARD"); }
+      else if (k === "S" || k === "ARROWDOWN") { e.preventDefault(); startDrive("BACKWARD"); }
+      else if (k === "A" || k === "ARROWLEFT") { e.preventDefault(); startDrive("LEFT"); }
+      else if (k === "D" || k === "ARROWRIGHT") { e.preventDefault(); startDrive("RIGHT"); }
+      else if (k === " ") { e.preventDefault(); triggerSafeStop(); }
+    });
+
+    window.addEventListener("keyup", (e) => {
+      if (document.activeElement === document.getElementById("cmdInput")) return;
+      const k = e.key.toUpperCase();
+      if (["W", "S", "A", "D", "ARROWUP", "ARROWDOWN", "ARROWLEFT", "ARROWRIGHT"].includes(k)) {
+        stopDrive();
+      }
+    });
+
+    // --- Disconnect Helper ---
+    async function disconnectCurrent() {
+      keepReading = false;
+      if (btPingTimer) {
+        clearInterval(btPingTimer);
+        btPingTimer = null;
+      }
+      try { if (writer) { await writer.releaseLock(); writer = null; } } catch(_) {}
+      try { if (reader) { await reader.cancel(); await reader.releaseLock(); reader = null; } } catch(_) {}
+      try { if (port) { await port.close(); port = null; } } catch(_) {}
+
+      connectionMode = null;
+      const btnUsb = document.getElementById("btnConnectUsb");
+      const btnBt = document.getElementById("btnConnectBt");
+      const badge = document.getElementById("connBadge");
+      
+      if (btnUsb) {
+        btnUsb.innerHTML = "<span>🔌 Connect USB (115200)</span>";
+        btnUsb.style.opacity = "1";
+      }
+      if (btnBt) {
+        btnBt.innerHTML = "<span>📶 Connect Bluetooth HC-05 (9600)</span>";
+        btnBt.style.opacity = "1";
+      }
+      if (badge) {
+        badge.innerText = "DISCONNECTED";
+        badge.style.color = "var(--text-muted)";
+        badge.style.borderColor = "var(--border)";
+      }
+    }
+
+    // --- Serial Connect & Direct Stream Handler (USB & Bluetooth) ---
+    async function toggleConnect(mode) {
+      if (port) {
+        const prevMode = connectionMode;
+        await disconnectCurrent();
+        logTerm("[SERIAL] Disconnected.", "term-warn");
+        if (prevMode === mode) return; // Clicking same button toggles disconnect
+      }
+
+      if (!("serial" in navigator)) {
+        alert("Web Serial is supported on Google Chrome, Microsoft Edge, and Opera!\nPlease open this file in Google Chrome or Microsoft Edge.");
+        return;
+      }
+
+      const isBt = (mode === 'bt');
+      const baudRate = isBt ? 9600 : 115200;
+
+      try {
+        port = await navigator.serial.requestPort();
+        await port.open({ baudRate: baudRate });
+        writer = port.writable.getWriter();
+        reader = port.readable.getReader();
+        keepReading = true;
+        connectionMode = mode;
+
+        const btnUsb = document.getElementById("btnConnectUsb");
+        const btnBt = document.getElementById("btnConnectBt");
+        const badge = document.getElementById("connBadge");
+
+        if (isBt) {
+          btnBt.innerHTML = "<span>Disconnect BT</span>";
+          btnUsb.style.opacity = "0.4";
+          badge.innerText = "CONNECTED (BT HC-05 / 9600)";
+          badge.style.color = "#60a5fa";
+          badge.style.borderColor = "#2563eb";
+          logTerm("[BLUETOOTH] Connected to HC-05 COM port at 9600 baud.", "term-line");
+
+          // Wake up Bluetooth stream immediately using ultra-fast 2-byte ping
+          sendCmd("P");
+          sendCmd("resume");
+          sendCmd({ cmd: "fsm_state", state: "NOMINAL" });
+
+          // Keepalive heartbeat every 2000ms using compact "P" packet (2 bytes)
+          btPingTimer = setInterval(() => {
+            if (port && connectionMode === 'bt') {
+              sendCmd("P");
+            }
+          }, 2000);
+        } else {
+          btnUsb.innerHTML = "<span>Disconnect USB</span>";
+          btnBt.style.opacity = "0.4";
+          badge.innerText = "CONNECTED (USB / 115200)";
+          badge.style.color = "var(--nominal)";
+          badge.style.borderColor = "var(--nominal)";
+          logTerm("[USB] Connected to hardware at 115200 baud.", "term-line");
+
+          sendCmd("resume");
+          sendCmd({ cmd: "fsm_state", state: "NOMINAL" });
+          sendCmd({ cmd: "servo_angle", value: 90 });
+        }
+
+        readStream();
+      } catch (err) {
+        console.error(err);
+        await disconnectCurrent();
+        const hint = isBt 
+          ? "Could not open Bluetooth COM port!\n1. Ensure HC-05 is paired in Windows Bluetooth settings (PIN: 1234 or 0000).\n2. Select the 'Standard Serial over Bluetooth' COM port in the picker.\n3. Make sure Arduino IDE Serial Monitor is CLOSED."
+          : "Could not open USB COM port!\n1. Make sure Arduino IDE Serial Monitor is CLOSED.\n2. Ensure no other application is using the COM port.";
+        alert(hint);
+      }
+    }
+
+    async function readStream() {
+      const decoder = new TextDecoder();
+      let buffer = "";
+
+      try {
+        while (keepReading) {
+          const { value, done } = await reader.read();
+          if (done) break;
+          if (value) {
+            const chunk = decoder.decode(value, { stream: true });
+            buffer += chunk;
+
+            // Buffer lines silently
+            const rawLines = chunk.replace(/\r/g, "").split("\n").filter(l => l.trim().length > 0);
+            if (rawLines.length > 0) {
+              pendingLines.push(...rawLines);
+              if (pendingLines.length > 50) pendingLines = pendingLines.slice(-50);
+              hasNewLines = true;
+            }
+
+            // Extract JSON
+            let start = buffer.indexOf("{");
+            while (start !== -1) {
+              let end = buffer.indexOf("}", start);
+              if (end === -1) break;
+              const jsonStr = buffer.slice(start, end + 1);
+              try {
+                const data = JSON.parse(jsonStr);
+                packetCount++;
+                processTelemetry(data);
+                buffer = buffer.slice(end + 1);
+                start = buffer.indexOf("{");
+              } catch (_) {
+                start = buffer.indexOf("{", start + 1);
+              }
+            }
+            if (buffer.length > 2048) buffer = buffer.slice(-512);
+          }
+        }
+      } catch (err) {
+        console.warn("Stream error:", err);
+        disconnectCurrent();
+        logTerm("[SERIAL] Connection lost or closed.", "term-warn");
+      }
+    }
+
+    // --- Command Sender (<0.1ms Persistent Stream) ---
+    function sendCmd(cmdObj) {
+      if (!writer) return;
+      const json = (typeof cmdObj === "string" ? cmdObj : JSON.stringify(cmdObj)) + "\n";
+      const bytes = new TextEncoder().encode(json);
+      writer.write(bytes).catch(e => console.warn(e));
+    }
+
+    function sendCustomCmd() {
+      const input = document.getElementById("cmdInput");
+      const val = input.value.trim();
+      if (!val) return;
+      try { sendCmd(JSON.parse(val)); } catch(_) { sendCmd(val); }
+      logTerm("Sent: " + val, "term-cmd");
+      input.value = "";
+    }
+
+    // --- Rover Drive Actuation ---
+    function startDrive(dir) {
+      if (!port) return;
+      currentDir = dir;
+      document.getElementById("txtDriveDir").innerText = dir;
+      highlightDpad(dir, true);
+      if (connectionMode === 'bt') {
+        const charMap = { FORWARD: "W", BACKWARD: "S", LEFT: "A", RIGHT: "D" };
+        sendCmd(charMap[dir] || "X");
+      } else {
+        sendCmd({ cmd: "drive", dir: dir, speed: currentSpeed });
+      }
+    }
+
+    function stopDrive() {
+      if (!port || currentDir === "STOP") return;
+      currentDir = "STOP";
+      document.getElementById("txtDriveDir").innerText = "STOP";
+      highlightDpad("ALL", false);
+      if (connectionMode === 'bt') {
+        sendCmd("X");
+      } else {
+        sendCmd({ cmd: "drive", dir: "STOP" });
+      }
+    }
+
+    function triggerSafeStop() {
+      stopDrive();
+      sendCmd({ cmd: "fsm_state", state: "SAFE_STOP" });
+      sendCmd("safe_stop");
+      logTerm("[SAFETY] MANUAL EMERGENCY STOP LATCHED!", "term-warn");
+    }
+
+    function resumeRover() {
+      trustScore = 100.0;
+      persistenceCount = 0;
+      setAttack("NONE");
+      sendCmd({ cmd: "fsm_state", state: "NOMINAL" });
+      sendCmd("resume");
+      logTerm("[SAFETY] Rover resumed. Full authority restored.", "term-line");
+    }
+
+    function updateSpeed(val) {
+      currentSpeed = parseInt(val);
+      document.getElementById("txtSpeedPwm").innerText = val + " PWM";
+      if (currentDir !== "STOP") {
+        sendCmd({ cmd: "drive", dir: currentDir, speed: currentSpeed });
+      }
+    }
+
+    function highlightDpad(dir, active) {
+      const ids = { FORWARD: "btnW", BACKWARD: "btnS", LEFT: "btnA", RIGHT: "btnD" };
+      if (dir === "ALL") {
+        Object.values(ids).forEach(id => document.getElementById(id).classList.remove("active"));
+      } else if (ids[dir]) {
+        document.getElementById(ids[dir]).classList.toggle("active", active);
+      }
+    }
+
+    // --- Saccadic & Auto-Sweep ---
+    function toggleSaccadic() {
+      isSaccadic = !isSaccadic;
+      sendCmd({ cmd: "saccadic", enable: isSaccadic });
+      const btn = document.getElementById("btnSaccadic");
+      btn.innerText = "Saccadic Reflex: " + (isSaccadic ? "ON" : "OFF");
+      btn.style.color = isSaccadic ? "var(--cyan)" : "var(--text-muted)";
+    }
+
+    function toggleAutoSweep() {
+      isAutoScanning = !isAutoScanning;
+      const btn = document.getElementById("btnAutoSweep");
+      if (isAutoScanning) {
+        btn.innerText = "Stop Sweep";
+        btn.style.background = "var(--limp)";
+        const angles = [45, 90, 135, 90];
+        autoScanTimer = setInterval(() => {
+          autoScanIdx = (autoScanIdx + 1) % angles.length;
+          const a = angles[autoScanIdx];
+          sendCmd({ cmd: "servo_angle", value: a });
+        }, 700);
+      } else {
+        btn.innerText = "Auto-Sweep";
+        btn.style.background = "#1f2937";
+        clearInterval(autoScanTimer);
+      }
+    }
+
+    function runDiagnostic() {
+      sendCmd("test_motors");
+      logTerm("[DIAG] Dispatched Hardware Diagnostic to Arduino Uno.", "term-cmd");
+    }
+
+    // --- Attack Deck ---
+    function setAttack(type) {
+      activeAttack = type;
+      document.getElementById("txtAttackStatus").innerText = type === "NONE" ? "TRUE HARDWARE STREAM" : "INJECTING: " + type;
+      document.getElementById("txtAttackStatus").style.color = type === "NONE" ? "var(--nominal)" : "var(--safestop)";
+      ["atkBlindspot", "atkGhost", "atkFreeze", "atkJitter"].forEach(id => document.getElementById(id).classList.remove("active"));
+      if (type === "BLINDSPOT") document.getElementById("atkBlindspot").classList.add("active");
+      if (type === "GHOST_WALL") document.getElementById("atkGhost").classList.add("active");
+      if (type === "REPLAY_FREEZE") document.getElementById("atkFreeze").classList.add("active");
+      if (type === "KINEMATIC_JITTER") document.getElementById("atkJitter").classList.add("active");
+    }
+
+    // --- 3-Pillar Mathematical Trust Engine ---
+    function processTelemetry(data) {
+      let us = Number(data.ultrasonic_cm) || 400.0;
+      let ir1 = (data.ir1 == 1) ? 1 : 0;
+      let ir2 = (data.ir2 == 1) ? 1 : 0;
+      let pan = Number(data.pan) || 90;
+      let mot = Number(data.mot) || 0;
+      let adc1 = data.ir1_adc !== undefined ? data.ir1_adc : (ir1 ? 0 : 1023);
+      let adc2 = data.ir2_adc !== undefined ? data.ir2_adc : (ir2 ? 0 : 1023);
+
+      // Cyber-Physical Attack Injection Override
+      if (activeAttack === "BLINDSPOT") { us = 145.0; ir1 = 1; }
+      else if (activeAttack === "GHOST_WALL") { us = 5.0; ir1 = 0; ir2 = 0; }
+      else if (activeAttack === "REPLAY_FREEZE") { us = 42.0; }
+      else if (activeAttack === "KINEMATIC_JITTER") {
+        jitterToggle = !jitterToggle;
+        us = jitterToggle ? 12.0 : 140.0;
+      }
+
+      // Pillar 1: Cross-Modal Plausibility
+      let p1 = 0;
+      if (pan >= 75 && pan <= 105 && (ir1 === 1 || ir2 === 1) && us > 80.0) p1 = 60;
+      else if (pan >= 75 && pan <= 105 && us < 12.0 && ir1 === 0 && ir2 === 0) p1 = 45;
+
+      // Pillar 2: Kinematic Velocity Bounds
+      let p2 = 0;
+      if (telemetryHistory.length > 0) {
+        const last = telemetryHistory[telemetryHistory.length - 1];
+        if (Math.abs(us - last.us) > 75.0) p2 = 35;
+      }
+
+      // Pillar 3: Sensor Freeze Detection
+      let p3 = 0;
+      if (telemetryHistory.length >= 10 && mot > 0) {
+        const last10 = telemetryHistory.slice(-10);
+        if (last10.every(f => Math.abs(f.us - us) < 0.001)) p3 = 50;
+      }
+
+      telemetryHistory.push({ us, pan, mot, ir1, ir2 });
+      if (telemetryHistory.length > 20) telemetryHistory.shift();
+
+      // Persistence Escalator & Asymmetric EMA
+      const totalRaw = p1 + p2 + p3;
+      if (totalRaw > 0) persistenceCount = Math.min(5, persistenceCount + 1);
+      else persistenceCount = Math.max(0, persistenceCount - 1);
+
+      const mult = 1.0 + 0.15 * persistenceCount;
+      const targetScore = Math.max(0, 100.0 - totalRaw * mult);
+      const alpha = targetScore < trustScore ? 0.65 : 0.12;
+      trustScore = Math.round((trustScore * (1 - alpha) + targetScore * alpha) * 10) / 10;
+
+      // 4-Stage FSM Mapping
+      let nextFsm = "NOMINAL";
+      if (trustScore >= 80.0) nextFsm = "NOMINAL";
+      else if (trustScore >= 60.0) nextFsm = "DEGRADED";
+      else if (trustScore >= 40.0) nextFsm = "LIMP_HOME";
+      else nextFsm = "SAFE_STOP";
+
+      if (nextFsm !== lastSentFsm) {
+        lastSentFsm = nextFsm;
+        sendCmd({ cmd: "fsm_state", state: nextFsm });
+        if (nextFsm === "SAFE_STOP") {
+          stopDrive();
+          sendCmd("safe_stop");
+        }
+      }
+
+      // Update UI elements
+      document.getElementById("txtScore").innerText = trustScore.toFixed(1) + "%";
+      document.getElementById("fsmBanner").className = "fsm-banner fsm-" + nextFsm;
+      document.getElementById("fsmStateText").innerText = nextFsm;
+      document.getElementById("fsmPwmText").innerText = nextFsm === "NOMINAL" ? "255 PWM" : nextFsm === "DEGRADED" ? "140 PWM" : nextFsm === "LIMP_HOME" ? "85 PWM" : "0 PWM";
+
+      // Radar & Sensors
+      panAngle = pan;
+      document.getElementById("radarNeedle").style.transform = `rotate(${pan - 90}deg)`;
+      document.getElementById("txtPanAngle").innerText = pan + "°";
+      document.getElementById("txtDistance").innerText = us.toFixed(1) + " cm";
+
+      document.getElementById("txtIr1Adc").innerText = `ADC: ${adc1} (${(adc1 * 5.0 / 1023).toFixed(2)}V)`;
+      document.getElementById("badgeIr1").innerText = ir1 ? "OBSTACLE" : "CLEAR";
+      document.getElementById("badgeIr1").style.color = ir1 ? "var(--safestop)" : "var(--nominal)";
+      document.getElementById("badgeIr1").style.borderColor = ir1 ? "var(--safestop)" : "var(--nominal)";
+
+      document.getElementById("txtIr2Adc").innerText = `ADC: ${adc2} (${(adc2 * 5.0 / 1023).toFixed(2)}V)`;
+      document.getElementById("badgeIr2").innerText = ir2 ? "OBSTACLE" : "CLEAR";
+      document.getElementById("badgeIr2").style.color = ir2 ? "var(--safestop)" : "var(--nominal)";
+      document.getElementById("badgeIr2").style.borderColor = ir2 ? "var(--safestop)" : "var(--nominal)";
+
+      scoreHistory.push(trustScore);
+      if (scoreHistory.length > 60) scoreHistory.shift();
+      scheduleChartDraw();
+    }
+
+    // --- Smooth Canvas Drawing (requestAnimationFrame) ---
+    let animId = null;
+    function scheduleChartDraw() {
+      if (animId) return;
+      animId = requestAnimationFrame(() => {
+        drawChart();
+        animId = null;
+      });
+    }
+
+    function drawChart() {
+      const cv = document.getElementById("cvScore");
+      const ctx = cv.getContext("2d");
+      const w = cv.width, h = cv.height;
+      ctx.clearRect(0, 0, w, h);
+
+      // Threshold lines
+      const lines = [
+        { v: 80, c: "rgba(16, 185, 129, 0.3)" },
+        { v: 60, c: "rgba(245, 158, 11, 0.3)" },
+        { v: 40, c: "rgba(249, 115, 22, 0.3)" }
+      ];
+      lines.forEach(l => {
+        const y = h - (l.v / 100) * h;
+        ctx.strokeStyle = l.c;
+        ctx.setLineDash([3, 3]);
+        ctx.beginPath();
+        ctx.moveTo(0, y);
+        ctx.lineTo(w, y);
+        ctx.stroke();
+      });
+      ctx.setLineDash([]);
+
+      if (scoreHistory.length < 2) return;
+      ctx.beginPath();
+      const step = w / (scoreHistory.length - 1);
+      scoreHistory.forEach((v, i) => {
+        const x = i * step;
+        const y = h - (v / 100) * (h - 10) - 5;
+        if (i === 0) ctx.moveTo(x, y);
+        else ctx.lineTo(x, y);
+      });
+      const cur = scoreHistory[scoreHistory.length - 1];
+      ctx.strokeStyle = cur >= 80 ? "#10b981" : cur >= 60 ? "#f59e0b" : cur >= 40 ? "#f97316" : "#ef4444";
+      ctx.lineWidth = 2.5;
+      ctx.stroke();
+    }
+
+    // --- Throttled Terminal Flusher (3 Hz) ---
+    function logTerm(msg, cls = "") {
+      pendingLines.push(msg);
+      hasNewLines = true;
+    }
+
+    setInterval(() => {
+      if (hasNewLines && pendingLines.length > 0) {
+        hasNewLines = false;
+        const box = document.getElementById("termBox");
+        box.innerHTML = pendingLines.map(l => `<div class="${clsForLine(l)}">${escapeHtml(l)}</div>`).join("");
+        box.scrollTop = box.scrollHeight;
+      }
+    }, 300);
+
+    function clsForLine(l) {
+      if (l.includes("[SAFETY]") || l.includes("SAFE_STOP")) return "term-warn";
+      if (l.includes("Sent:") || l.includes("[DIAG]")) return "term-cmd";
+      return "term-line";
+    }
+
+    function escapeHtml(s) {
+      return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+    }
+
+    // Rate Counter
+    setInterval(() => {
+      const hz = packetCount - lastPacketCount;
+      lastPacketCount = packetCount;
+      document.getElementById("txtRateHz").innerText = hz + " Hz";
+    }, 1000);
+  </script>
+</body>
+</html>

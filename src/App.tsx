@@ -188,9 +188,19 @@ export default function App() {
 
   // Rolling score history for Canvas Chart
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
-  const historyRef = useRef<number[]>(new Array(60).fill(100));
+  const pendingRawLinesRef = useRef<string[]>([]);
+  const hasNewSerialLinesRef = useRef<boolean>(false);
+  const animFrameRef = useRef<number | null>(null);
 
-  // Rate calculator interval (Hz)
+  const scheduleDraw = () => {
+    if (animFrameRef.current !== null) return;
+    animFrameRef.current = requestAnimationFrame(() => {
+      drawChart();
+      animFrameRef.current = null;
+    });
+  };
+
+  // High-performance background timers (Rate calculator & 3 Hz Terminal Flusher)
   useEffect(() => {
     let lastCount = 0;
     const interval = setInterval(() => {
@@ -198,9 +208,25 @@ export default function App() {
       const hz = current - lastCount;
       lastCount = current;
       setPacketRateHz(hz);
+      setPacketCount(current);
     }, 1000);
-    return () => clearInterval(interval);
-  }, []);
+
+    // Flush serial terminal ONLY when actual new data has arrived (at most 3 Hz)
+    const termInterval = setInterval(() => {
+      if (hasNewSerialLinesRef.current && !pauseMonitor) {
+        hasNewSerialLinesRef.current = false;
+        setRawSerialLines([...pendingRawLinesRef.current]);
+      }
+    }, 300);
+
+    return () => {
+      clearInterval(interval);
+      clearInterval(termInterval);
+      if (animFrameRef.current !== null) {
+        cancelAnimationFrame(animFrameRef.current);
+      }
+    };
+  }, [pauseMonitor]);
 
   // Periodic Watchdog Heartbeat: sends keepalive to Arduino Uno every 500ms when continuous cruise is active
   useEffect(() => {
@@ -412,7 +438,7 @@ export default function App() {
 
     historyRef.current.push(smoothedScore);
     if (historyRef.current.length > 60) historyRef.current.shift();
-    drawChart();
+    scheduleDraw();
   };
 
   // ============================================================
@@ -473,11 +499,12 @@ export default function App() {
               buffer += chunk;
 
               if (!pauseMonitor) {
-                setRawSerialLines((prev) => {
-                  const combined = chunk.replace(/\r/g, "");
-                  const newLines = combined.split("\n").filter((l) => l.trim().length > 0);
-                  return [...prev, ...newLines].slice(-60);
-                });
+                const combined = chunk.replace(/\r/g, "");
+                const newLines = combined.split("\n").filter((l) => l.trim().length > 0);
+                if (newLines.length > 0) {
+                  pendingRawLinesRef.current = [...pendingRawLinesRef.current, ...newLines].slice(-60);
+                  hasNewSerialLinesRef.current = true;
+                }
               }
 
               // Robust Bracket-Matching JSON Extractor
@@ -499,7 +526,6 @@ export default function App() {
                   const humVal = Number.isFinite(Number(data.humidity_pct)) ? Number(data.humidity_pct) : 65.0;
 
                   packetCountRef.current += 1;
-                  setPacketCount(packetCountRef.current);
 
                   const motVal = Number.isFinite(Number(data.mot)) ? Number(data.mot) : 0;
                   const panVal = Number.isFinite(Number(data.pan)) ? Number(data.pan) : 90;
@@ -839,7 +865,7 @@ export default function App() {
   return (
     <div className="min-h-screen bg-zinc-950 text-zinc-100 flex flex-col font-sans selection:bg-cyan-500 selection:text-black">
       {/* Top Header Navigation */}
-      <header className="border-b border-zinc-800/80 bg-zinc-900/60 backdrop-blur px-6 py-3.5 flex flex-wrap items-center justify-between gap-4 sticky top-0 z-40">
+      <header className="border-b border-zinc-800 bg-zinc-900 px-6 py-3.5 flex flex-wrap items-center justify-between gap-4 sticky top-0 z-40 shadow-md">
         <div className="flex items-center gap-3">
           <div className="p-2 rounded-xl bg-cyan-500 text-black shadow-lg shadow-cyan-500/20">
             <Car className="w-5 h-5" />
@@ -1345,6 +1371,7 @@ export default function App() {
                 className="absolute bottom-6 w-36 h-40 origin-bottom transition-all duration-300"
                 style={{
                   transform: `rotate(${radarPanAngle - 90}deg)`,
+                  willChange: "transform",
                   background: (telemetry.ir1 || telemetry.ir2)
                     ? "conic-gradient(from 160deg at 50% 100%, transparent, rgba(239, 68, 68, 0.45), transparent 40deg)"
                     : "conic-gradient(from 160deg at 50% 100%, transparent, rgba(6, 182, 212, 0.35), transparent 40deg)"
@@ -1696,7 +1723,7 @@ export default function App() {
 
       {/* ================= HARDWARE WIRING & PINOUT MODAL ================= */}
       {showWiringModal && (
-        <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
+        <div className="fixed inset-0 z-50 bg-black/85 flex items-center justify-center p-4">
           <div className="bg-zinc-900 border border-zinc-800 rounded-2xl max-w-2xl w-full p-6 shadow-2xl space-y-4 max-h-[90vh] overflow-y-auto">
             <div className="flex items-center justify-between border-b border-zinc-800 pb-3">
               <div className="flex items-center gap-2">
@@ -1754,7 +1781,7 @@ export default function App() {
 
       {/* ================= DOWNLOAD FILES MODAL ================= */}
       {showDownloadsModal && (
-        <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
+        <div className="fixed inset-0 z-50 bg-black/85 flex items-center justify-center p-4">
           <div className="bg-zinc-900 border border-zinc-800 rounded-2xl max-w-xl w-full p-6 shadow-2xl space-y-4">
             <div className="flex items-center justify-between border-b border-zinc-800 pb-3">
               <div className="flex items-center gap-2">

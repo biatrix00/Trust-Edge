@@ -71,6 +71,8 @@ bool isSafeStopped = false;
 String currentMovement = "STOP";
 int currentSpeed = 255;       // Requested PWM power (80 - 255)
 int currentServoAngle = 90;
+unsigned long servoAttachTime = 0;
+bool servoIsAttached = false;
 
 // Upgrades: Saccadic Cross-Verification Reflex & Hardware-Enforced 4-Stage FSM Speed Ceiling
 bool saccadicMode = true;      // Active Saccadic cross-verification reflex (default enabled)
@@ -90,7 +92,12 @@ float smoothedDistance = 400.0;
 // Controls the single MG90S Tower Pro servo (SER1 / Pin 10) for Ultrasonic Pan & Saccadic Reflex
 void setServoAngle(int angle) {
   currentServoAngle = constrain(angle, 20, 160);
+  if (!sensorServo.attached()) {
+    sensorServo.attach(SERVO_PIN);
+  }
   sensorServo.write(currentServoAngle);
+  servoAttachTime = millis();
+  servoIsAttached = true;
 }
 
 // ------------------- L293D SHIFT REGISTER DRIVER ------
@@ -344,6 +351,12 @@ void handleCommand(String cmd) {
     return;
   }
 
+  // Bluetooth keepalive ping
+  if (cmd.indexOf("bt_ping") >= 0 || cmd.indexOf("ping") >= 0 || cmd == "P" || cmd == "p") {
+    lastBtRxTime = millis();
+    return;
+  }
+
   // Safety overrides
   if (cmd.indexOf("safe_stop") >= 0) {
     triggerSafeStop();
@@ -521,11 +534,11 @@ void setup() {
   pinMode(IR2_PIN, INPUT_PULLUP);
   pinMode(STATUS_LED, OUTPUT);
 
-  // Attach the single MG90S Tower Pro Pan Servo to SER1 header (Digital Pin 10)
-  sensorServo.attach(SERVO_PIN);    // SER1 = Digital Pin 10
+  // Attach and center the single MG90S Tower Pro Pan Servo (SER1 header = Digital Pin 10)
   setServoAngle(90);
 
   lastCommandTime = millis();
+  lastBtRxTime = millis();
   isSafeStopped = false;
   isTimedMove = false;
   saccadicMode = true;
@@ -556,7 +569,15 @@ void loop() {
     stopMotors();
   }
 
-  // 4. Fixed 10 Hz Telemetry Streaming Loop (every 100 ms)
+  // 4. Auto-detach MG90S servo 300ms after reaching target angle.
+  // This completely stops Timer 1 interrupt pulses, eliminating 100% of servo jitter,
+  // buzzing, and vibration caused by SoftwareSerial timing contention!
+  if (servoIsAttached && (now - servoAttachTime > 300)) {
+    sensorServo.detach();
+    servoIsAttached = false;
+  }
+
+  // 5. Fixed 10 Hz Telemetry Streaming Loop (every 100 ms)
   if (now - lastTelemetryTime >= TELEMETRY_INTERVAL_MS) {
     lastTelemetryTime = now;
 
@@ -571,20 +592,21 @@ void loop() {
     int ir2 = (rawA1 == LOW || adc2 < 400) ? 1 : 0;
 
     // --- Active Saccadic Cross-Verification Reflex ---
-    // If an optical IR bumper detects an obstacle, automatically aim the ultrasonic sensor to cross-examine
+    // Debounced with 2-sample filter so electrical noise spikes on battery do not jerk the servo
+    static uint8_t ir1_filter = 0;
+    static uint8_t ir2_filter = 0;
+    ir1_filter = (ir1_filter << 1) | (ir1 & 1);
+    ir2_filter = (ir2_filter << 1) | (ir2 & 1);
+    bool stableIr1 = (ir1_filter & 0x03) == 0x03;
+    bool stableIr2 = (ir2_filter & 0x03) == 0x03;
+
     if (saccadicMode) {
-      if (ir1 == 1 && ir2 == 0) {
-        if (currentServoAngle != 135) {
-          setServoAngle(135); // Aim Left flank
-        }
-      } else if (ir2 == 1 && ir1 == 0) {
-        if (currentServoAngle != 45) {
-          setServoAngle(45); // Aim Right flank
-        }
-      } else if (ir1 == 1 && ir2 == 1) {
-        if (currentServoAngle != 90) {
-          setServoAngle(90); // Snap Center
-        }
+      if (stableIr1 && !stableIr2) {
+        if (currentServoAngle != 135) setServoAngle(135); // Aim Left flank
+      } else if (stableIr2 && !stableIr1) {
+        if (currentServoAngle != 45) setServoAngle(45); // Aim Right flank
+      } else if (stableIr1 && stableIr2) {
+        if (currentServoAngle != 90) setServoAngle(90); // Snap Center
       }
     }
 
@@ -626,31 +648,29 @@ void loop() {
     Serial.print(F("\",\"temp_c\":28.0,\"humidity_pct\":65.0}"));
     Serial.println();
 
-    // --- Stream to Bluetooth HC-05 (9600) ONLY when actively in use ---
-    // Prevents SoftwareSerial 9600 baud bit-banging from freezing the CPU for 88ms!
-    if (now - lastBtRxTime < 5000) {
+    // --- Stream to Bluetooth HC-05 (9600) ---
+    // Throttled to ~2.5 Hz (every 400ms) with lightweight packet (~72 bytes)
+    // Ensures SoftwareSerial transmission takes only ~75ms, leaving >325ms (81% CPU time)
+    // with interrupts enabled for lightning-fast WASD response and zero servo jitter!
+    static unsigned long lastBtTxTime = 0;
+    bool btActive = (now < 30000) || (now - lastBtRxTime < 10000);
+    if (btActive && (now - lastBtTxTime >= 400)) {
+      lastBtTxTime = now;
       BTSerial.print(F("{\"ts\":"));
-      BTSerial.print(now / 1000.0, 2);
+      BTSerial.print(now / 1000.0, 1);
       BTSerial.print(F(",\"ultrasonic_cm\":"));
       BTSerial.print(dist, 1);
       BTSerial.print(F(",\"ir1\":"));
       BTSerial.print(ir1);
       BTSerial.print(F(",\"ir2\":"));
       BTSerial.print(ir2);
-      BTSerial.print(F(",\"ir1_adc\":"));
-      BTSerial.print(adc1);
-      BTSerial.print(F(",\"ir2_adc\":"));
-      BTSerial.print(adc2);
       BTSerial.print(F(",\"mot\":"));
       BTSerial.print(effectiveMot);
       BTSerial.print(F(",\"pan\":"));
       BTSerial.print(currentServoAngle);
-      BTSerial.print(F(",\"saccadic\":"));
-      BTSerial.print(saccadicMode ? 1 : 0);
       BTSerial.print(F(",\"fsm\":\""));
       BTSerial.print(fsmStateStr);
-      BTSerial.print(F("\",\"temp_c\":28.0,\"humidity_pct\":65.0}"));
-      BTSerial.println();
+      BTSerial.print(F("\"}\r\n"));
     }
   }
 }
